@@ -361,6 +361,28 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
                                        interactive=True)
                 scene_load_btn = gr.Button("📂 Загрузить сцену")
 
+            with gr.Accordion("📖 Цепочка (сцена = клип)", open=False, elem_classes="h3ss-acc"):
+                gr.HTML("<div class='h3ss-note'>Добавьте текущие настройки как кадр. "
+                        "«В очередь» = отдельная генерация на кадр, с рецептом 832x480 / 6 шагов.</div>")
+                with gr.Row():
+                    chain_add_btn = gr.Button("➕ Добавить текущую сцену")
+                    chain_del_btn = gr.Button("✖ Убрать выбранный")
+                    chain_up_btn = gr.Button("↑ Выше")
+                    chain_down_btn = gr.Button("↓ Ниже")
+                chain_idx = gr.Number(value=0, precision=0, label="Номер кадра")
+                chain_df = gr.DataFrame(headers=["№", "Настройки", "Сек", "Фото"],
+                                        interactive=False, wrap=True)
+                with gr.Row():
+                    chain_model_dd = gr.Dropdown(
+                        label="Модель для цепочки",
+                        choices=[(m, m) for m in ("minimax_h3_10eros_max_b5_ref2va",
+                                                  "minimax_h3_ref2va_pruned",
+                                                  "minimax_h3_ref2va")],
+                        value="minimax_h3_10eros_max_b5_ref2va", interactive=True)
+                    chain_submit_btn = gr.Button("▶️ Отправить цепочку в очередь",
+                                                 elem_classes="h3ss-btn")
+                chain_state = gr.State([])  # mirror of the `chain` python list
+
             with gr.Accordion("👥 Сцена и люди", open=False, elem_classes="h3ss-acc"):
                 with gr.Row():
                     dd("Состав", "cast")
@@ -626,6 +648,59 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
             return gr.update(choices=[(x, x) for x in sets], value=None), \
                 f"Сцена «{scene_choice}» удалена."
 
+        def _persist_photos(files_list, setname_value):
+            """Saved photo set wins; otherwise copy uploads under _current so
+            paths survive past this session."""
+            if setname_value:
+                paths = self._set_paths(setname_value)
+                if paths:
+                    return paths
+            paths = []
+            if files_list:
+                dst = os.path.join(PHOTOS_DIR, "_current")
+                os.makedirs(dst, exist_ok=True)
+                for i, f in enumerate(list(files_list)[:4], 1):
+                    src = f.name if hasattr(f, "name") else str(f)
+                    ext = os.path.splitext(src)[1] or ".jpg"
+                    path = os.path.join(dst, f"ref{i}{ext}")
+                    if os.path.abspath(src) != os.path.abspath(path):
+                        shutil.copyfile(src, path)
+                    paths.append(path)
+            return paths
+
+        def _df_rows(chain_list):
+            return [[i + 1,
+                     (sc["settings"].get("mood") or "") + "/" + (sc["settings"].get("format") or ""),
+                     sc["settings"].get("shotSec"),
+                     sc["photo_set"] or (f"{len(sc['photos'])} фото")]
+                    for i, sc in enumerate(chain_list)]
+
+        def chain_add(setname_value, files_list, *vals):
+            s = collect(*vals)
+            photos = _persist_photos(files_list, setname_value)
+            chain.append({"settings": s, "photo_set": setname_value or "",
+                          "photos": photos})
+            return chain, gr.DataFrame(value=_df_rows(chain)), \
+                f"Кадр {len(chain)} добавлен в цепочку."
+
+        def chain_move(idx, direction):
+            if not chain:
+                raise gr.Error("Цепочка пуста.")
+            i = int(idx or 0) - 1
+            j = i + direction
+            if not (0 <= i < len(chain)) or not (0 <= j < len(chain)):
+                return gr.update(), gr.update()
+            chain[i], chain[j] = chain[j], chain[i]
+            return chain, gr.DataFrame(value=_df_rows(chain))
+
+        def chain_remove(idx):
+            if not chain:
+                raise gr.Error("Цепочка пуста.")
+            i = int(idx or 0) - 1
+            if 0 <= i < len(chain):
+                chain.pop(i)
+            return chain, gr.DataFrame(value=_df_rows(chain))
+
         build_btn.click(do_build, inputs=comps, outputs=[out_prompt, out_recap, status])
         # present only if the plugin manager resolved the requested main-form
         # components; a missing one is skipped rather than breaking the tab
@@ -646,5 +721,13 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
         scene_load_btn.click(do_load_scene, inputs=[scene_dd],
                              outputs=comps + [gallery])
         scene_del_btn.click(do_del_scene, inputs=[scene_dd], outputs=[scene_dd, status])
+        chain_add_btn.click(chain_add, inputs=[setname, files] + comps,
+                            outputs=[chain_state, chain_df, status])
+        chain_up_btn.click(lambda idx: chain_move(idx, -1), inputs=[chain_idx],
+                           outputs=[chain_state, chain_df])
+        chain_down_btn.click(lambda idx: chain_move(idx, +1), inputs=[chain_idx],
+                             outputs=[chain_state, chain_df])
+        chain_del_btn.click(chain_remove, inputs=[chain_idx],
+                            outputs=[chain_state, chain_df])
 
         return {}
