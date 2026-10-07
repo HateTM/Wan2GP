@@ -53,3 +53,33 @@ def list_scenes():
     if not os.path.isdir(SCENES_DIR):
         return []
     return sorted(f[:-5] for f in os.listdir(SCENES_DIR) if f.endswith(".json"))
+
+
+# ---------------------------------------------------------------------------
+# H3 generation task building
+# ---------------------------------------------------------------------------
+
+# Benchmark-measured fast recipe (benchmarks/run-addendum): H3 832x480, 6 steps.
+RECIPE_RESOLUTION = "832x480"
+RECIPE_STEPS = 6
+
+
+def frames_from_seconds(sec):
+    """Snap a duration to H3's 17k+5 frame grid at 24 fps (clamped >= 5)."""
+    x = max(5, round(float(sec or 0) * 24))
+    return x + (5 - x % 17) % 17
+
+
+def build_task(prompt, scene, model_type, photo_paths):
+    """Build one submit_manifest task dict from a scene snapshot."""
+    sec = (scene.get("settings") or {}).get("shotSec") or 5
+    return {
+        "model_type": model_type,
+        "prompt": prompt,
+        "resolution": RECIPE_RESOLUTION,
+        "num_inference_steps": RECIPE_STEPS,
+        "video_length": frames_from_seconds(sec),
+        "image_refs": list(photo_paths or [])[:4],
+        "seed": -1,
+        "batch_size": 1,
+    }
