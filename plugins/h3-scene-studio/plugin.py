@@ -282,6 +282,9 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
     def setup_ui(self):
         self.request_component("prompt")
         self.request_component("image_refs")
+        self.request_component("resolution")
+        self.request_component("num_inference_steps")
+        self.request_component("video_length")
         self.add_tab(tab_id=PlugIn_Id, label=PlugIn_Name, component_constructor=self.create_tab)
 
     # -- helpers ----------------------------------------------------------
@@ -514,10 +517,34 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
             global_prompt["text"] = prompt
             return prompt, recap, "Промпт собран. Кнопка «Вставить в генератор» перенесёт его в основную форму."
 
-        def do_push(current):
+        def do_push(current, shot_sec):
             if not current or not current.strip():
                 raise gr.Error("Сначала соберите промпт.")
-            return current, "Промпт вставлен в основную форму. Выберите модель MiniMax H3 Ref2VA."
+            frames = scene_store.frames_from_seconds(shot_sec)
+            hint = ""
+            updates = [current]
+            for comp in recipe_targets:
+                if comp is self.resolution:
+                    # model-filtered dropdown: if 832x480 is not among the
+                    # current choices (non-H3 model), skip it and tell the user
+                    try:
+                        choices = list(getattr(comp, "choices", None) or [])
+                        labels = [str(c[0]) if isinstance(c, tuple) else str(c)
+                                  for c in choices]
+                        if choices and "832x480" not in labels:
+                            hint = " 832x480 нет в списке разрешений — выставьте вручную."
+                            updates.append(gr.update())
+                            continue
+                    except Exception:
+                        pass
+                    updates.append(gr.update(value=scene_store.RECIPE_RESOLUTION))
+                elif comp is self.num_inference_steps:
+                    updates.append(gr.update(value=scene_store.RECIPE_STEPS))
+                else:  # video_length
+                    updates.append(gr.update(value=frames))
+            updates.append("Рецепт применён: 832x480, 6 шагов, " + str(frames)
+                           + " кадров." + hint + " Модель: MiniMax H3 Ref2VA.")
+            return updates
 
         def do_attach(files_list):
             if not files_list:
@@ -600,7 +627,14 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
                 f"Сцена «{scene_choice}» удалена."
 
         build_btn.click(do_build, inputs=comps, outputs=[out_prompt, out_recap, status])
-        push_btn.click(do_push, inputs=[out_prompt], outputs=[self.prompt, status])
+        # present only if the plugin manager resolved the requested main-form
+        # components; a missing one is skipped rather than breaking the tab
+        recipe_targets = [c for c in (self.__dict__.get("resolution"),
+                                      self.__dict__.get("num_inference_steps"),
+                                      self.__dict__.get("video_length"))
+                          if c is not None]
+        push_btn.click(do_push, inputs=[out_prompt, S["shotSec"]],
+                       outputs=[self.prompt] + recipe_targets + [status])
         attach_btn.click(do_attach, inputs=[files], outputs=[self.image_refs, status])
         files.change(show_files, inputs=[files], outputs=[gallery])
         save_btn.click(do_save_set, inputs=[setname, files], outputs=[sets_dd, status])
