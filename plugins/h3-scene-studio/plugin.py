@@ -10,6 +10,7 @@ import json
 import os
 import shutil
 import time
+import uuid
 
 import gradio as gr
 
@@ -282,9 +283,11 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
     def setup_ui(self):
         self.request_component("prompt")
         self.request_component("image_refs")
+        self.request_component("state")
         self.request_component("resolution")
         self.request_component("num_inference_steps")
         self.request_component("video_length")
+        self.request_global("get_state_model_type")
         self.add_tab(tab_id=PlugIn_Id, label=PlugIn_Name, component_constructor=self.create_tab)
 
     # -- helpers ----------------------------------------------------------
@@ -539,7 +542,7 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
             global_prompt["text"] = prompt
             return prompt, recap, "Промпт собран. Кнопка «Вставить в генератор» перенесёт его в основную форму."
 
-        def do_push(current, shot_sec):
+        def do_push(state, current, shot_sec):
             if not current or not current.strip():
                 raise gr.Error("Сначала соберите промпт.")
             frames = scene_store.frames_from_seconds(shot_sec)
@@ -547,19 +550,13 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
             updates = [current]
             for comp in recipe_targets:
                 if comp is self.resolution:
-                    # model-filtered dropdown: if 832x480 is not among the
-                    # current choices (non-H3 model), skip it and tell the user
-                    try:
-                        choices = list(getattr(comp, "choices", None) or [])
-                        labels = [str(c[0]) if isinstance(c, tuple) else str(c)
-                                  for c in choices]
-                        if choices and "832x480" not in labels:
-                            hint = " 832x480 нет в списке разрешений — выставьте вручную."
-                            updates.append(gr.update())
-                            continue
-                    except Exception:
-                        pass
-                    updates.append(gr.update(value=scene_store.RECIPE_RESOLUTION))
+                    # live model decides (component .choices go stale on model
+                    # switch): only H3 models take the 832x480 recipe
+                    if not scene_store.is_h3_model(self.get_state_model_type(state)):
+                        hint = " 832x480 применимо только к моделям H3 — выставьте разрешение вручную."
+                        updates.append(gr.update())
+                    else:
+                        updates.append(gr.update(value=scene_store.RECIPE_RESOLUTION))
                 elif comp is self.num_inference_steps:
                     updates.append(gr.update(value=scene_store.RECIPE_STEPS))
                 else:  # video_length
@@ -612,11 +609,11 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
             return [f.name if hasattr(f, "name") else str(f)
                     for f in (files_list or [])[:4]]
 
-        def do_save_scene(scene_name_text, setname_value, *vals):
+        def do_save_scene(scene_name_text, sets_dd_value, setname_value, *vals):
             s = collect(*vals)
             name, _ = scene_store.save_scene(
                 scene_name_text, s,
-                photo_set=(setname_value or ""),
+                photo_set=(sets_dd_value or setname_value or ""),
                 prompt=global_prompt.get("text", "") or "")
             sets = scene_store.list_scenes()
             return gr.update(choices=[(x, x) for x in sets], value=name), \
@@ -636,8 +633,12 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
                 if k == "files":
                     updates.append(paths)  # photos come from the linked set
                     continue
-                v = s.get(k)
-                updates.append(gr.update(value=v) if v is not None else gr.update())
+                stored_key = k
+                if k in ("introLookName", "teaseLookName"):
+                    # collect() renamed them for the engine; map back
+                    stored_key = "introLook" if k == "introLookName" else "teaseLook"
+                updates.append(gr.update(value=scene_store.restore_value(stored_key,
+                                                                         s.get(stored_key))))
             return updates + [paths]  # trailing: gallery
 
         def do_del_scene(scene_choice):
@@ -649,15 +650,18 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
                 f"Сцена «{scene_choice}» удалена."
 
         def _persist_photos(files_list, setname_value):
-            """Saved photo set wins; otherwise copy uploads under _current so
-            paths survive past this session."""
+            """Saved photo set wins; otherwise copy uploads under a unique
+            _current/<stamp> folder so paths survive this session and never
+            overwrite files referenced by earlier chain frames."""
             if setname_value:
                 paths = self._set_paths(setname_value)
                 if paths:
                     return paths
             paths = []
             if files_list:
-                dst = os.path.join(PHOTOS_DIR, "_current")
+                dst = os.path.join(PHOTOS_DIR, "_current",
+                                   time.strftime("%Y%m%d-%H%M%S")
+                                   + f"-{uuid.uuid4().hex[:6]}")
                 os.makedirs(dst, exist_ok=True)
                 for i, f in enumerate(list(files_list)[:4], 1):
                     src = f.name if hasattr(f, "name") else str(f)
@@ -675,10 +679,11 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
                      sc["photo_set"] or (f"{len(sc['photos'])} фото")]
                     for i, sc in enumerate(chain_list)]
 
-        def chain_add(setname_value, files_list, *vals):
+        def chain_add(sets_dd_value, setname_value, files_list, *vals):
             s = collect(*vals)
-            photos = _persist_photos(files_list, setname_value)
-            chain.append({"settings": s, "photo_set": setname_value or "",
+            photo_set = sets_dd_value or setname_value or ""
+            photos = _persist_photos(files_list, photo_set)
+            chain.append({"settings": s, "photo_set": photo_set,
                           "photos": photos})
             return chain, gr.DataFrame(value=_df_rows(chain)), \
                 f"Кадр {len(chain)} добавлен в цепочку."
@@ -704,6 +709,8 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
         def chain_submit(chain_list, model_type):
             if not chain_list:
                 raise gr.Error("Цепочка пуста — добавьте хотя бы один кадр.")
+            if api_session.get_model_def(model_type) is None:
+                raise gr.Error(f"Модель «{model_type}» не найдена — выберите другую в списке цепочки.")
             tasks = []
             for sc in chain_list:
                 prompt, _recap = engine.build(dict(sc["settings"]))
@@ -726,7 +733,7 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
                                       self.__dict__.get("num_inference_steps"),
                                       self.__dict__.get("video_length"))
                           if c is not None]
-        push_btn.click(do_push, inputs=[out_prompt, S["shotSec"]],
+        push_btn.click(do_push, inputs=[self.state, out_prompt, S["shotSec"]],
                        outputs=[self.prompt] + recipe_targets + [status])
         attach_btn.click(do_attach, inputs=[files], outputs=[self.image_refs, status])
         files.change(show_files, inputs=[files], outputs=[gallery])
@@ -734,12 +741,12 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
         load_btn.click(do_load_set, inputs=[sets_dd], outputs=[gallery, files])
         del_btn.click(do_del_set, inputs=[sets_dd], outputs=[sets_dd, gallery, files, status])
         scene_save_btn.click(do_save_scene,
-                             inputs=[scene_name, setname] + comps,
+                             inputs=[scene_name, sets_dd, setname] + comps,
                              outputs=[scene_dd, status])
         scene_load_btn.click(do_load_scene, inputs=[scene_dd],
                              outputs=comps + [gallery])
         scene_del_btn.click(do_del_scene, inputs=[scene_dd], outputs=[scene_dd, status])
-        chain_add_btn.click(chain_add, inputs=[setname, files] + comps,
+        chain_add_btn.click(chain_add, inputs=[sets_dd, setname, files] + comps,
                             outputs=[chain_state, chain_df, status])
         chain_up_btn.click(lambda idx: chain_move(idx, -1), inputs=[chain_idx],
                            outputs=[chain_state, chain_df])

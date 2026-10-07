@@ -83,3 +83,31 @@ def build_task(prompt, scene, model_type, photo_paths):
         "seed": -1,
         "batch_size": 1,
     }
+
+
+# ---------------------------------------------------------------------------
+# Engine-shape <-> component-shape helpers
+# ---------------------------------------------------------------------------
+
+# Checkbox component keys: collect() stores them as "on"/"off" strings for the
+# engine, but gradio Checkbox.postprocess coerces any string to bool — so a
+# stored "off" would load back as True. restore_value converts on load.
+CHECKBOX_KEYS = frozenset({
+    "act_intro", "act_tease", "act_hj", "act_bj", "act_breast", "act_sex",
+    "act_cum", "talk", "fixRef", "manJoin", "artifactFull", "pov",
+})
+
+# collect() renames these component keys for the engine; undo on load.
+LOOK_RENAME = {"introLook": "introLookName", "teaseLook": "teaseLookName"}
+
+
+def is_h3_model(model_type):
+    """True when the active model is a MiniMax H3 family model."""
+    return str(model_type or "").startswith("minimax_h3")
+
+
+def restore_value(key, value):
+    """Convert a stored engine-shape value back into its component value."""
+    if key in CHECKBOX_KEYS:
+        return value == "on"
+    return value
