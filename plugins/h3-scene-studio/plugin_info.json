@@ -1,0 +1,9 @@
+{
+    "name": "H3 Scene Studio",
+    "version": "2.1.0",
+    "description": "Native Gradio scene builder for MiniMax H3 Ref2VA. Russian UI, reference photo sets, randomized timed shots (intro/tease/HJ/BJ/breast/sex/cum), camera and sound control. Builds the English prompt and pushes it, with the attached photos, into the main generator. Includes scene library, story chains to the queue, and the benchmark-measured recipe (832x480 / 6 steps).",
+    "author": "",
+    "date": "2026-10-07",
+    "type": "app",
+    "wan2gp_version": "1.0"
+}
