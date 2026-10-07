@@ -701,6 +701,24 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
                 chain.pop(i)
             return chain, gr.DataFrame(value=_df_rows(chain))
 
+        def chain_submit(chain_list, model_type):
+            if not chain_list:
+                raise gr.Error("Цепочка пуста — добавьте хотя бы один кадр.")
+            tasks = []
+            for sc in chain_list:
+                prompt, _recap = engine.build(dict(sc["settings"]))
+                tasks.append(scene_store.build_task(prompt, sc, model_type,
+                                                    sc.get("photos") or []))
+            try:
+                api_session.submit_manifest(tasks)
+            except Exception as e:  # invalid model_type, validation, queue lock…
+                raise gr.Error(f"Очередь отклонила цепочку: {e}")
+            no_refs = sum(1 for t in tasks if not t["image_refs"])
+            msg = f"В очередь добавлено {len(tasks)} задач. Модель: {model_type}."
+            if no_refs:
+                msg += f" Внимание: {no_refs} задач(а) без референсов — H3 сработает как T2VA."
+            return msg
+
         build_btn.click(do_build, inputs=comps, outputs=[out_prompt, out_recap, status])
         # present only if the plugin manager resolved the requested main-form
         # components; a missing one is skipped rather than breaking the tab
@@ -729,5 +747,7 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
                              outputs=[chain_state, chain_df])
         chain_del_btn.click(chain_remove, inputs=[chain_idx],
                             outputs=[chain_state, chain_df])
+        chain_submit_btn.click(chain_submit, inputs=[chain_state, chain_model_dd],
+                               outputs=[status])
 
         return {}
