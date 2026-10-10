@@ -1,0 +1,35 @@
+[
+  {
+    "prompt": "A cinematic drone shot flying over a coastal road at sunset, waves crashing on rocks below.",
+    "negative_prompt": "",
+    "alt_prompt": "",
+    "batch_size": 1,
+    "repeat_generation": 1,
+    "seed": 1234,
+    "image_mode": 0,
+    "multi_prompts_gen_type": "PW",
+    "image_prompt_type": "",
+    "settings_version": 2.79,
+    "model_type": "ltx2_25_22B_redgraft_nsfw",
+    "num_inference_steps": 8,
+    "video_length": 41,
+    "resolution": "832x480"
+  },
+  {
+    "prompt": "A cinematic drone shot flying over a coastal road at sunset, waves crashing on rocks below.",
+    "negative_prompt": "",
+    "alt_prompt": "",
+    "batch_size": 1,
+    "repeat_generation": 1,
+    "seed": 1234,
+    "image_mode": 0,
+    "multi_prompts_gen_type": "PW",
+    "image_prompt_type": "",
+    "settings_version": 2.79,
+    "model_type": "ltx2_25_22B_redgraft_nsfw",
+    "num_inference_steps": 8,
+    "video_length": 41,
+    "resolution": "832x480",
+    "spatial_upsampling": "ltx25*2"
+  }
+]

@@ -1,0 +1,23 @@
+{
+  "ram-mmgp": {
+    "timing": {
+      "832x480, 8st": {
+        "median": 31.9,
+        "runs": [
+          31.9,
+          31.5,
+          32.1
+        ]
+      },
+      "1280x704, 8st": {
+        "median": 69.5,
+        "runs": [
+          68.9,
+          69.9,
+          69.5
+        ]
+      }
+    },
+    "ram_log": "[RAM] MMGP RAM Allocator: the RAM of freed CPU tensors goes back to the system"
+  }
+}

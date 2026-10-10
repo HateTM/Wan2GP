@@ -1,0 +1,14 @@
+suite,name,resolution,frames,overrides,duration_s,status,warmup,baseline
+h3,warmup (excluded),832x480,124,{},178.4,ok,True,False
+h3,"baseline: 832x480, 8st res_multistep",832x480,124,{},97.4,ok,False,True
+h3,6 steps,832x480,124,"{""num_inference_steps"": 6}",76.0,ok,False,False
+h3,4 steps (Civitai ultra-fast recipe),832x480,124,"{""num_inference_steps"": 4}",60.0,ok,False,False
+h3,832x480 + MiniMax H3 VAE x2,832x480,124,"{""spatial_upsampling"": ""h3_vae*2""}",162.9,ok,False,False
+h3,248 frames,832x480,248,{},261.0,ok,False,False
+h3,124 frames + RIFE x2,832x480,124,"{""temporal_upsampling"": ""rife*2""}",109.6,ok,False,False
+ltx25,warmup (excluded),1280x704,121,{},146.4,ok,True,False
+ltx25,"baseline: 1280x704, 8st, guidance5x2ph (current default)",1280x704,121,{},71.7,ok,False,True
+ltx25,"fast recipe: 1280x704, 8st, guidance1 1ph",1280x704,121,"{""guidance_scale"": 1, ""guidance2_scale"": 1, ""guidance_phases"": 1}",83.6,ok,False,False
+ltx25,"lowres: 832x480, 8st, guidance1",832x480,121,"{""guidance_scale"": 1, ""guidance2_scale"": 1, ""guidance_phases"": 1}",41.1,ok,False,False
+ltx25,"lowres: 832x480, 8st, guidance5 (quality-preserving)",832x480,121,{},39.7,ok,False,False
+ltx25,lowres + LTX2.5 Pixel Upscaler x2,832x480,121,"{""guidance_scale"": 1, ""guidance2_scale"": 1, ""guidance_phases"": 1, ""spatial_upsampling"": ""ltx25*2""}",76.5,ok,False,False
