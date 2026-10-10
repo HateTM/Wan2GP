@@ -3410,7 +3410,7 @@ if args.bf16:
 text_encoder_quantization =server_config.get("text_encoder_quantization", "int8")
 attention_mode = server_config["attention_mode"]
 if len(args.attention)> 0:
-    if args.attention in ["auto", "sdpa", "sage", "sage2", "flash", "xformers"]:
+    if args.attention in ["auto", "sdpa", "sage", "sage2", "sage3", "flash", "xformers"]:
         attention_mode = args.attention
         server_config["attention_mode"] = attention_mode
         lock_ui_attention = True

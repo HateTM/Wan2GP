@@ -171,16 +171,15 @@ if sageattn3 is None:
 @torch.compiler.disable()
 def sageattn3_wrapper(
         qkv_list,
-        attention_length
+        attention_length,
+        causal = False,
     ):
+    # attention_mask never reaches this wrapper: pay_attention routes masked calls to sage2/sdpa
     q,k, v = qkv_list
-    # qkv_list = [q,k,v]
-    # del q, k ,v
-    # o = sageattn3(qkv_list, tensor_layout="NHD")
     q = q.transpose(1,2)
     k = k.transpose(1,2)
     v = v.transpose(1,2)
-    o = sageattn3(q, k, v)
+    o = sageattn3(q, k, v, is_causal=causal)
     o = o.transpose(1,2)
     qkv_list.clear()
 
@@ -527,7 +526,7 @@ def pay_attention(
     elif attn=="sage3":
         qkv_list = [q,k,v]
         del q,k,v
-        x = sageattn3_wrapper(qkv_list, lq)
+        x = sageattn3_wrapper(qkv_list, lq, causal=causal)
     elif attn=="sage2":
         qkv_list = [q,k,v]
         del q,k,v
