@@ -841,6 +841,29 @@ def _gguf_qtype_name(qtype_obj):
     return getattr(qtype_obj, "name", None) or str(qtype_obj)
 
 
+_GGUF_ACTIVATION_LIMIT = 1024.0
+
+
+def _gguf_scale_activation(x, bias):
+    """Keep activations in the range of the llama.cpp CUDA kernels.
+
+    They quantize activations to 8-bit blocks of 32 and keep the block sum in FP16: a block whose sum exceeds 65504
+    turns the whole output row into NaN. Models with massive activations (MiniMax H3) hit that, so large inputs are divided
+    by a power of two (exact) and the output is multiplied back.
+    """
+    x = x if x.is_contiguous() else x.contiguous()
+    if "sumfix" in str(getattr(_gguf_cuda_module(), "__version__", "")):
+        return x, bias, None  # build that stores the Q8_1 block sum scaled: no overflow, no guard needed
+    mn, mx = torch.aminmax(x)
+    amax = torch.maximum(mx.float(), -mn.float())
+    if not (torch.cuda.is_current_stream_capturing() or torch.compiler.is_compiling()):
+        if not amax.item() > _GGUF_ACTIVATION_LIMIT:
+            return x, bias, None
+    scale = torch.exp2(torch.ceil(torch.log2(torch.clamp(amax / _GGUF_ACTIVATION_LIMIT, min=1.0))))
+    inv = 1.0 / scale
+    return x * inv.to(x.dtype), (None if bias is None else bias * inv.to(bias.dtype)), scale
+
+
 def _try_llamacpp_cuda_linear(weight_tensor, input_tensor, bias, target_dtype):
     if not _gguf_cuda_kernels_enabled():
         return None
@@ -854,7 +877,10 @@ def _try_llamacpp_cuda_linear(weight_tensor, input_tensor, bias, target_dtype):
         gguf_llamacpp_cuda = _gguf_cuda_module()
         if gguf_llamacpp_cuda is None or not gguf_llamacpp_cuda.may_support_linear_qtype_name(qtype_name):
             return None
+        input_tensor, bias, act_scale = _gguf_scale_activation(input_tensor, bias)
         fast_out = gguf_llamacpp_cuda.linear(raw, qtype_name, tuple(getattr(weight_tensor, "_tensor_shape", weight_tensor.shape)), input_tensor, bias, target_dtype)
+        if fast_out is not None and act_scale is not None:
+            fast_out = fast_out * act_scale.to(fast_out.dtype)
         if fast_out is not None:
             _gguf_log_once(f"llamacpp_cuda_linear_active_{qtype_name}", f"[GGUF][llama.cpp CUDA] linear fast path active for {qtype_name}.")
         return fast_out

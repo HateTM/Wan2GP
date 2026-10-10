@@ -306,7 +306,9 @@ class SafeTensorFile:
     def __init__(self, file_path, metadata, catalog, skip_bytes, lazy_loading = True, writable_tensors = True, device = "cpu", streaming = False):
         self._file_path = file_path
         self._metadata = metadata
-        self._catalog = catalog
+        # The readers below walk the catalog accumulating tensor lengths: they need the physical order of the data, while a header
+        # may list its tensors in any order (e.g. W4A8 files whose tensors are sorted by name but stored grouped otherwise).
+        self._catalog = type(catalog)(sorted(catalog.items(), key=lambda item: item[1]["data_offsets"][0]))
         self._skip_bytes = skip_bytes
         self._keys = None
         self.sd = None
