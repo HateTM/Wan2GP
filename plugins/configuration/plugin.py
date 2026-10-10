@@ -1,5 +1,6 @@
 from shared.kernels import int8_backend, kernel_policy
 from shared import attention_kit
+from shared.cuda_memory import RAM_ALLOCATOR_DEFAULT, RAM_ALLOCATOR_KEY
 import gradio as gr
 from shared.utils.plugins import WAN2GPPlugin
 import copy
@@ -393,6 +394,13 @@ class ConfigTabPlugin(WAN2GPPlugin):
                     self.attention_head_split_choice = gr.Dropdown(choices=attention_kit.HEAD_SPLIT_CHOICES, value=self.server_config.get("attention_head_split", 0), label="Attention Head Split (much lower VRAM for long videos, up to 10% slower)", info="Models that support it compute attention one group of heads at a time for long sequences, which lowers the VRAM peak of denoising. Higher levels use more groups, saving more VRAM at a small speed cost; how many groups each level gives depends on the model. Applies to the next generation without reloading.")
 
                 with gr.Tab("RAM/VRAM Management"):
+                    self.ram_allocator_choice = gr.Dropdown(
+                        choices=[("MMGP RAM Allocator (the RAM of freed CPU tensors goes back to the system when the queue is done, a model is released or the RAM runs short)", "mmgp"),
+                                 ("PyTorch Default RAM Allocator (keeps the RAM of freed CPU tensors for reuse)", "default")],
+                        value=self.server_config.get(RAM_ALLOCATOR_KEY, RAM_ALLOCATOR_DEFAULT),
+                        label="RAM Allocator (requires restart)",
+                        info="The MMGP RAM Allocator frees several GB that PyTorch would keep after a generation or a model release, at the same speed. Same as --ram-allocator, which takes precedence.",
+                    )
                     self.vram_allocator_choice = gr.Dropdown(
                         choices=[("MMGP Optimized VRAM Allocator with RAM Spilling (a generation slightly too large for the VRAM can still finish, more slowly)", "vmm_spill"),
                                  ("MMGP Optimized VRAM Allocator (out of memory error when no VRAM is left)", "vmm"),
@@ -859,7 +867,7 @@ class ConfigTabPlugin(WAN2GPPlugin):
             self.vae_config_choice, self.boost_choice, self.int8_kernels_choice, self.kernel_precision_choice, self.attention_head_split_choice,
             self.video_profile_choice, self.image_profile_choice, self.audio_profile_choice, self.video_preload_choice, self.image_preload_choice, self.audio_preload_choice,
             self.video_preload_mode_choice, self.image_preload_mode_choice, self.audio_preload_mode_choice,
-            self.smart_memory_pinning_choice, self.perc_reserved_mem_max_choice, self.read_ahead_choice, self.vram_allocator_choice, self.max_reserved_loras_choice,
+            self.smart_memory_pinning_choice, self.perc_reserved_mem_max_choice, self.read_ahead_choice, self.vram_allocator_choice, self.ram_allocator_choice, self.max_reserved_loras_choice,
             self.deepy_llm_engine_choice,
             *self.codex_config_ui.save_components,
             *self.claude_config_ui.save_components,
@@ -955,7 +963,7 @@ class ConfigTabPlugin(WAN2GPPlugin):
             vae_config_choice, boost_choice, int8_kernels_choice, kernel_precision_choice, attention_head_split_choice,
             video_profile_choice, image_profile_choice, audio_profile_choice, video_preload_choice, image_preload_choice, audio_preload_choice,
             video_preload_mode_choice, image_preload_mode_choice, audio_preload_mode_choice,
-            smart_memory_pinning_choice, perc_reserved_mem_max_choice, read_ahead_choice, vram_allocator_choice, max_reserved_loras_choice,
+            smart_memory_pinning_choice, perc_reserved_mem_max_choice, read_ahead_choice, vram_allocator_choice, ram_allocator_choice, max_reserved_loras_choice,
             deepy_llm_engine_choice,
             codex_executable_choice, codex_model_choice, codex_reasoning_effort_choice,
             claude_executable_choice, claude_model_choice, claude_reasoning_effort_choice,
@@ -1074,7 +1082,7 @@ class ConfigTabPlugin(WAN2GPPlugin):
             "video_profile": video_profile_choice, "image_profile": image_profile_choice, "audio_profile": audio_profile_choice,
             "video_preload_in_VRAM": video_preload_choice, "image_preload_in_VRAM": image_preload_choice, "audio_preload_in_VRAM": audio_preload_choice,
             "video_preload_mode": video_preload_mode_choice, "image_preload_mode": image_preload_mode_choice, "audio_preload_mode": audio_preload_mode_choice,
-            "smart_memory_pinning": smart_memory_pinning_choice, "perc_reserved_mem_max": perc_reserved_mem_max_choice, "read_ahead": read_ahead_choice, "vram_allocator": vram_allocator_choice,
+            "smart_memory_pinning": smart_memory_pinning_choice, "perc_reserved_mem_max": perc_reserved_mem_max_choice, "read_ahead": read_ahead_choice, "vram_allocator": vram_allocator_choice, RAM_ALLOCATOR_KEY: ram_allocator_choice,
             "vae_config": vae_config_choice, "vae_precision": VAE_precision_choice,
             "mixed_precision": mixed_precision_choice, "metadata_type": metadata_choice,
             "transformer_quantization": quantization_choice, "transformer_dtype_policy": transformer_dtype_policy_choice,

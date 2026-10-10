@@ -118,6 +118,7 @@ struct Driver {
     CUresult (*DeviceGet)(CUdevice*, int);
     CUresult (*DeviceGetAttribute)(int*, int, CUdevice);
     CUresult (*DeviceGetDefaultMemPool)(CUmemoryPool*, CUdevice);
+    CUresult (*DevicePrimaryCtxRetain)(CUcontext*, CUdevice);
     CUresult (*CtxGetCurrent)(CUcontext*);
     CUresult (*CtxSetCurrent)(CUcontext);
     CUresult (*CtxSynchronize)();
@@ -180,6 +181,7 @@ int load_driver() {
     bind(cu.DeviceGet, "cuDeviceGet");
     bind(cu.DeviceGetAttribute, "cuDeviceGetAttribute");
     bind(cu.DeviceGetDefaultMemPool, "cuDeviceGetDefaultMemPool");
+    bind(cu.DevicePrimaryCtxRetain, "cuDevicePrimaryCtxRetain");
     bind(cu.CtxGetCurrent, "cuCtxGetCurrent");
     bind(cu.CtxSetCurrent, "cuCtxSetCurrent");
     bind(cu.CtxSynchronize, "cuCtxSynchronize");
@@ -523,9 +525,20 @@ void retire(Stale range) {
     retired_ready.notify_one();
 }
 
-Device& device_state(int index) {  // created by the first allocation on a device, with its context current
+// A thread that has made no CUDA runtime call has no current context (PyTorch only calls cudaSetDevice to change the device), and the driver
+// calls of the allocator fail there (no free VRAM is reported): the device's primary context is made current, as the runtime does on a
+// thread's first call
+void bind_context(const Device& d) {
+    CUcontext current = nullptr;
+    if (cu.CtxGetCurrent(&current) == CUDA_SUCCESS && current == nullptr) cu.CtxSetCurrent(d.context);
+}
+
+Device& device_state(int index) {  // created by the first allocation on a device
     auto found = devices.find(index);
-    if (found != devices.end()) return found->second;
+    if (found != devices.end()) {
+        bind_context(found->second);
+        return found->second;
+    }
     load_driver();
     Device& d = devices[index];
     d.prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
@@ -535,6 +548,8 @@ Device& device_state(int index) {  // created by the first allocation on a devic
     d.access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
     CUdevice dev;
     cu.DeviceGet(&dev, index);
+    cu.DevicePrimaryCtxRetain(&d.context, dev);  // PyTorch's context, kept for the life of the process
+    bind_context(d);
     cu.DeviceGetDefaultMemPool(&d.small_pool, dev);
     CUmemPoolProps mid_props = {};
     mid_props.allocType = CU_MEM_ALLOCATION_TYPE_PINNED;
@@ -552,7 +567,6 @@ Device& device_state(int index) {  // created by the first allocation on a devic
         int no = 0;  // like PyTorch, memory freed on another stream is not reused before that stream has finished with it
         cu.MemPoolSetAttribute(pool, CU_MEMPOOL_ATTR_REUSE_ALLOW_INTERNAL_DEPENDENCIES, &no);
     }
-    cu.CtxGetCurrent(&d.context);
     if (!unmapper_started) {
 #ifdef _WIN32
         std::thread(unmap_retired).detach();
@@ -628,8 +642,13 @@ unsigned long long ram_margin(unsigned long long total) {
     return std::max(4ull << 30, total / 10);
 }
 
+void (*ram_release)() = nullptr;  // vmm_set_ram_release: the MMGP RAM allocator gives back the freed blocks it keeps (ram_alloc.cpp)
+
 bool ram_short(size_t bytes) {
     unsigned long long total, available;
+    ram_info(total, available);
+    if (available >= bytes + ram_margin(total) || ram_release == nullptr) return available < bytes + ram_margin(total);
+    ram_release();  // no CUDA call, no Python: safe here, also during a graph capture
     ram_info(total, available);
     return available < bytes + ram_margin(total);
 }
@@ -1098,6 +1117,7 @@ EXPORT void vmm_free(void* ptr, size_t size, int device, CUstream stream) {
     if (!ptr) return;
     std::lock_guard<std::mutex> guard(lock);
     Device& d = devices.at(device);
+    bind_context(d);
     CUdeviceptr dptr = reinterpret_cast<CUdeviceptr>(ptr);
     if (debug_threshold.load(std::memory_order_relaxed)) debug_freed(d, dptr);
     count(d, -static_cast<int64_t>(size));
@@ -1220,6 +1240,11 @@ EXPORT void vmm_set_pressure_callback(int64_t (*callback)(size_t, int)) {  // ca
     pressure_callback = callback;
 }
 
+EXPORT void vmm_set_ram_release(void (*release)()) {  // the RAM allocator's ra_release, called before a spill is refused for lack of RAM
+    std::lock_guard<std::mutex> guard(lock);
+    ram_release = release;
+}
+
 EXPORT void vmm_set_oom_thrower(void (*thrower)(const char*)) {  // throws c10::OutOfMemoryError(message), see oom_error.cpp; nullptr removes it
     std::lock_guard<std::mutex> guard(lock);
     oom_thrower = thrower;
@@ -1241,6 +1266,7 @@ EXPORT int64_t vmm_room(int device) {  // VRAM that new memory may still take (s
     std::lock_guard<std::mutex> guard(lock);
     auto found = devices.find(device);
     if (found == devices.end()) return 0;
+    bind_context(found->second);
     RelaxedCapture relaxed(any_capture());
     return room_now(found->second);
 }
