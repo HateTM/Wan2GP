@@ -1,0 +1,9 @@
+{
+    "guidance_scale": 1.0,
+    "guidance_phases": 1,
+    "sample_solver": "res_multistep",
+    "image_prompt_type": "S",
+    "video_prompt_type": "I",
+    "audio_prompt_type": "",
+    "help": "Start from the Start Image while keeping the identity from the Reference Image(s). For Write, select an image-aware H3 prompt mode; the Start Image is a keyframe at 0.00 s, the Reference Image only gives identity."
+}

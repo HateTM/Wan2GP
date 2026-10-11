@@ -1,0 +1,23 @@
+{
+  "model": {
+    "name": "10Eros Max H3 beta6 8-step TURBO Hybrid W4A8 (references)",
+    "architecture": "minimax_h3_hybrid_pruned",
+    "description": "10Eros Max beta6 8-step TURBO W4A8, described by its author as a mostly-reference hybrid. This prebuilt checkpoint uses WanGP Hybrid conditioning for reference images, video, and audio; no Ref2VA AdaLN overlay is needed.",
+    "URLs": [
+      "10Eros_Max_h3_8stepTURBO_beta6_pruned_w4a8.safetensors"
+    ],
+    "qkv_layout": "grouped",
+    "preset_profiles_dir": [
+      "h3_10eros_ref2va_presets"
+    ],
+    "text_encoder_variant": "gguf_q2_k",
+    "hybrid_prebuilt": true
+  },
+  "config": "gguf_q2_k",
+  "num_inference_steps": 8,
+  "sample_solver": "res_multistep",
+  "flow_shift": 10.0,
+  "guidance_scale": 1.0,
+  "guidance_phases": 1,
+  "audio_prompt_type": ""
+}

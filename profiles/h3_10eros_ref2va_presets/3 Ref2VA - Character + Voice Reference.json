@@ -1,0 +1,9 @@
+{
+  "guidance_scale": 1.0,
+  "guidance_phases": 1,
+  "sample_solver": "res_multistep",
+  "image_prompt_type": "",
+  "video_prompt_type": "I",
+  "audio_prompt_type": "B",
+  "help": "Person from the Reference Image speaking with the voice from Audio Reference 1 (up to 15 s of reference audio). For Write, select an image-aware H3 prompt mode; write 'with the voice from <Audio 1>' in your text so the enhancer adds the voice reference, and put the exact words in double quotes."
+}
