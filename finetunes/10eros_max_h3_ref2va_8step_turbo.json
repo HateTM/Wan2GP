@@ -11,6 +11,7 @@
       "h3_10eros_ref2va_presets"
     ],
     "text_encoder_variant": "gguf_q2_k",
+    "auto_h3_prompt_format": true,
     "hybrid_prebuilt": true
   },
   "config": "gguf_q2_k",

@@ -6551,6 +6551,18 @@ def resolve_prompt_enhancer_settings(model_type, model_def, prompt_enhancer_mode
         prompt_max_tokens_key = f"text_prompt_enhancer_max_tokens{prompt_profile_suffix}"
         prompt_enhancer_instructions = model_def.get(prompt_instructions_key, model_def.get("text_prompt_enhancer_instructions", prompt_enhancer_instructions))
         text_encoder_max_tokens = model_def.get(prompt_max_tokens_key, model_def.get("text_prompt_enhancer_max_tokens", text_encoder_max_tokens))
+    if model_def.get("auto_h3_prompt_format") and enhancer_kwargs is not None:
+        has_source = enhancer_kwargs.get("h3_has_source_media")
+        if has_source is None:
+            has_source = any(str(enhancer_kwargs.get(key) or "") for key in ("image_prompt_type", "video_prompt_type", "audio_prompt_type"))
+        if not has_source:
+            prompt_enhancer_instructions = (prompt_enhancer_instructions or "") + (
+                "\n\nThis is text-to-video generation with no source images, video, or audio. "
+                "Begin summary with [text-to-video generation]. Write retention_analysis: N/A. "
+                "Do not describe this as reference generation, video continuation, video editing, or audio reuse. "
+                "Do not invent <Picture N>, <Video N>, or <Audio N> assets or labels. "
+                "Preserve every requested subject, color, garment, prop, location, action, and camera instruction."
+            )
     return prompt_enhancer_instructions, int(text_encoder_max_tokens)
 
 def exec_prompt_enhancer_engine(state, model_type, model_def, prompt_enhancer_modes, original_prompts, image_start, original_image_refs, is_image, audio_only, seed, progress, override_profile, send_cmd = None, tools = None, enhancer_kwargs = None, alt_prompts = None, alt_prompt_inherits_prompt_paragraphs = False):
@@ -7025,7 +7037,6 @@ def generate_media(
         edit_media(send_cmd, state, mode, video_source, seed, temporal_upsampling, spatial_upsampling, film_grain_intensity, film_grain_saturation, postprocess_audio, postprocess_audio_prompt, postprocess_audio_neg_prompt, repeat_generation, audio_source, replace_voice_method, replace_voice_sample, replace_voice_sample2, prompt=prompt, image_refs=image_refs, image_refs_relative_size=image_refs_relative_size, spatial_upsampler_prompt=spatial_upsampler_prompt, spatial_upsampler_reference_images=spatial_upsampler_reference_images, spatial_upsampler_param=spatial_upsampler_param, spatial_upsampler_param2=spatial_upsampler_param2, spatial_upsampler_parameters=spatial_upsampler_parameters, client_id=client_id, plugin_data=plugin_data)
         return True
     enhancer_mode = server_config.get("enhancer_mode", 1)
-    auto_prompt_enhancer_requested = server_config.get("enhancer_enabled", 0) > 0 and enhancer_mode == 0 and prompt_enhancer is not None and len(prompt_enhancer) > 0
     postprocess_audio = audio_processor_api.normalize_method(postprocess_audio or "")
     replace_voice_method = audio_processor_api.normalize_method(replace_voice_method or "")
     postprocess_audio_meta = audio_processor_api.method_metadata(postprocess_audio)
@@ -7043,6 +7054,36 @@ def generate_media(
     config = model_config_groups.normalize_config_selection(config_groups, config)
     is_image = image_mode > 0
     audio_only = model_def.get("audio_only", False)
+    def has_h3_source(value):
+        if value is None:
+            return False
+        if isinstance(value, (str, list, tuple, dict)):
+            return bool(value)
+        return True
+    h3_has_source_media = any(has_h3_source(value) for value in (
+        image_start, image_end, image_refs, video_source, video_guide, video_guide2,
+        video_guide3, image_guide, video_mask, audio_guide, audio_guide2, audio_guide3,
+    ))
+    auto_h3_prompt_format = False
+    if model_def.get("auto_h3_prompt_format") and not is_image and not audio_only:
+        from models.minimax_h3.prompt_enhancer import is_ref2va_formatted_prompt, normalize_ref2va_formatted_prompt
+        prompt_units = prompt_parser.split_prompt_units(prompt, multi_prompts_gen_type)
+        auto_h3_prompt_format = any(not is_ref2va_formatted_prompt(unit) for unit in prompt_units)
+        if auto_h3_prompt_format:
+            if server_config.get("enhancer_enabled", 0) <= 0:
+                raise ValueError("H3 automatic prompt formatting requires a configured prompt enhancer")
+            preceding_modes = str(prompt_enhancer or "") if enhancer_mode == 0 else ""
+            format_mode = "TI" if any(has_h3_source(value) for value in (image_start, image_end, image_refs)) else "T"
+            modes = prompt_enhancer_chaining.split_mode(preceding_modes)
+            if modes and modes[-1].replace("K", "") in ("T", "TI"):
+                modes[-1] = format_mode
+            else:
+                modes.append(format_mode)
+            prompt_enhancer = ",".join(modes)
+    auto_h3_text_only = auto_h3_prompt_format and not h3_has_source_media
+    auto_prompt_enhancer_requested = server_config.get("enhancer_enabled", 0) > 0 and (
+        auto_h3_prompt_format or (enhancer_mode == 0 and bool(prompt_enhancer) and not model_def.get("auto_h3_prompt_format"))
+    )
     duration_def = model_def.get("duration_slider", None)
 
     set_video_prompt_type = model_def.get("set_video_prompt_type", None)
@@ -7609,9 +7650,13 @@ def generate_media(
         start_time = time.time()
         prompt_was_enhanced = prompt_has_history
         alt_prompt_was_enhanced = alt_prompt_has_history
+        metadata_original_prompts = original_prompts
+        if auto_h3_prompt_format and prompt_has_history:
+            original_prompts = prompts.copy()
         if auto_prompt_enhancer_requested:
             send_cmd("progress", [0, get_latest_status(state, "Enhancing Prompt")])
             enhancer_kwargs = {"image_prompt_type":  image_prompt_type, "video_prompt_type":  video_prompt_type, "audio_prompt_type":  audio_prompt_type}
+            enhancer_kwargs["h3_has_source_media"] = h3_has_source_media
             enhancer_kwargs["control_image"] = video_guide if is_image and "V" in video_prompt_type else None
             enhancer_kwargs["generation_callbacks"] = {"stop_requested": lambda: gen.get("abort", False), "enhancement_progress": EnhancementProgress(lambda value, desc, total, unit: send_cmd("progress", [value, get_latest_status(state, desc), total, unit]))}
             if model_def.get("prompt_enhancer_video_duration", False) and not is_image and not audio_only:
@@ -7650,7 +7695,7 @@ def generate_media(
             if enhanced is not None:
                 if routed:
                     if enhanced.prompt_changed:
-                        prompts = [normalize_generated_prompt_lines(value, multi_prompts_gen_type, multi_prompt_output=multi_prompt_output) for value in enhanced.prompts]
+                        prompts = [normalize_ref2va_formatted_prompt(value, text_only=auto_h3_text_only) if auto_h3_prompt_format else normalize_generated_prompt_lines(value, multi_prompts_gen_type, multi_prompt_output=multi_prompt_output) for value in enhanced.prompts]
                         task["prompt"] = prompt_parser.ENHANCED_PROMPT_PREFIX + prompt_parser.serialize_prompt_units("", prompts, multi_prompts_gen_type)
                         prompt_was_enhanced = True
                     if enhanced.alt_prompt_changed:
@@ -7665,7 +7710,7 @@ def generate_media(
                         enhanced_prompt = normalize_generated_prompt_lines(enhanced_prompts[0], multi_prompts_gen_type, multi_prompt_output=True)
                         enhanced_prompts = prompt_parser.split_prompt_units(enhanced_prompt, multi_prompts_gen_type)
                     else:
-                        enhanced_prompts = [normalize_generated_prompt_lines(one_prompt, multi_prompts_gen_type) for one_prompt in enhanced_prompts]
+                        enhanced_prompts = [normalize_ref2va_formatted_prompt(one_prompt, text_only=auto_h3_text_only) if auto_h3_prompt_format else normalize_generated_prompt_lines(one_prompt, multi_prompts_gen_type) for one_prompt in enhanced_prompts]
                     # On-the-fly enhancement keeps task prompts clean; originals are saved in metadata.
                     task["prompt"] = prompt_parser.ENHANCED_PROMPT_PREFIX + prompt_parser.serialize_prompt_units("", enhanced_prompts, multi_prompts_gen_type)
                     prompts = enhanced_prompts
@@ -7677,6 +7722,12 @@ def generate_media(
                         window["prompt"] = prompt_enhancer_images.strip_window_commands([prompts[idx] if idx < len(prompts) else prompts[-1]])[0][0]
                     frame_scheduler["prompts"] = [window["prompt"] for window in scheduled_windows]
                 abort = gen.get("abort", False)
+        if auto_h3_prompt_format and not all(is_ref2va_formatted_prompt(one_prompt) for one_prompt in prompts):
+            raise ValueError("H3 prompt enhancer did not produce the required six-section format")
+        if auto_h3_prompt_format:
+            original_prompts = metadata_original_prompts
+            auto_h3_prompt_format = False
+            auto_prompt_enhancer_requested = False
 
  
         while not abort and not stop_current_sample:

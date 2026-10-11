@@ -1,5 +1,52 @@
 """Prompt guidance and enhancer system prompts for MiniMax H3."""
 
+import re
+
+
+H3_REF2VA_FIELDS = (
+    "subject_definitions",
+    "summary",
+    "retention_analysis",
+    "detailed_description",
+    "overall_soundscape",
+    "non_diegetic_music",
+)
+
+
+def is_ref2va_formatted_prompt(prompt):
+    """Recognize a complete six-section H3 prompt without rewriting user text."""
+    starts = []
+    for field in H3_REF2VA_FIELDS:
+        match = re.search(rf"(?m)^\s*{field}\s*:", str(prompt or ""), re.IGNORECASE)
+        if match is None:
+            return False
+        starts.append(match.start())
+    return starts == sorted(starts)
+
+
+def normalize_ref2va_formatted_prompt(prompt, *, text_only=False):
+    """Keep H3 sections multiline and canonicalize common LLM heading variants."""
+    lines = []
+    for line in str(prompt or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        if line.strip().startswith("```"):
+            continue
+        if not line.strip():
+            continue
+        if text_only:
+            if re.match(r"^\s*<(?:Picture|Video|Audio)\s+\d+>\s*", line, re.IGNORECASE):
+                continue
+            line = re.sub(r"<(?:Picture|Video|Audio)\s+\d+>", "", line, flags=re.IGNORECASE)
+        heading = re.match(r"^\s*(?:#{1,6}\s*)?(?:\*\*)?([a-z_]+)(?:\*\*)?\s*:?(?:\s*)$", line, re.IGNORECASE)
+        if heading and heading.group(1).lower() in H3_REF2VA_FIELDS:
+            lines.append(heading.group(1).lower() + ":")
+            continue
+        inline = re.match(r"^\s*(?:#{1,6}\s*)?(?:\*\*)?([a-z_]+)(?:\*\*)?\s*:\s*(.+)$", line, re.IGNORECASE)
+        if inline and inline.group(1).lower() in H3_REF2VA_FIELDS:
+            lines.append(inline.group(1).lower() + ": " + inline.group(2))
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
 
 SLIDING_WINDOW_PROMPT_INFOS = """### Controlling sliding-window length and hard cuts
 
