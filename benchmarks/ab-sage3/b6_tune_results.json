@@ -1,0 +1,381 @@
+[
+  {
+    "variant": "warmup",
+    "prompt": "A",
+    "seconds": 175.0,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h40m33s_seed1234_A cinematic drone shot flying over a coastal road.mp4",
+    "size_mb": 5.44,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 8
+    }
+  },
+  {
+    "variant": "base8",
+    "prompt": "A",
+    "seconds": 88.0,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h42m01s_seed1234_A cinematic drone shot flying over a coastal road.mp4",
+    "size_mb": 5.44,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 8
+    }
+  },
+  {
+    "variant": "d10",
+    "prompt": "A",
+    "seconds": 52.4,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h42m55s_seed1234_A cinematic drone shot flying over a coastal road.mp4",
+    "size_mb": 4.72,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 4,
+      "activated_loras": [
+        "minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors"
+      ],
+      "loras_multipliers": "1.0"
+    }
+  },
+  {
+    "variant": "d10p05",
+    "prompt": "A",
+    "seconds": 57.3,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h43m51s_seed1234_A cinematic drone shot flying over a coastal road.mp4",
+    "size_mb": 5.06,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 4,
+      "activated_loras": [
+        "minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors",
+        "minimax_h3_pdmd_4step_lora_avg_rank_57_bf16.safetensors"
+      ],
+      "loras_multipliers": "1.0 0.5"
+    }
+  },
+  {
+    "variant": "d075p025",
+    "prompt": "A",
+    "seconds": 55.9,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h44m47s_seed1234_A cinematic drone shot flying over a coastal road.mp4",
+    "size_mb": 5.0,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 4,
+      "activated_loras": [
+        "minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors",
+        "minimax_h3_pdmd_4step_lora_avg_rank_57_bf16.safetensors"
+      ],
+      "loras_multipliers": "0.75 0.25"
+    }
+  },
+  {
+    "variant": "d05p05",
+    "prompt": "A",
+    "seconds": 53.1,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h45m42s_seed1234_A cinematic drone shot flying over a coastal road.mp4",
+    "size_mb": 5.94,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 4,
+      "activated_loras": [
+        "minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors",
+        "minimax_h3_pdmd_4step_lora_avg_rank_57_bf16.safetensors"
+      ],
+      "loras_multipliers": "0.5 0.5"
+    }
+  },
+  {
+    "variant": "d075",
+    "prompt": "A",
+    "seconds": 51.5,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h46m34s_seed1234_A cinematic drone shot flying over a coastal road.mp4",
+    "size_mb": 4.86,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 4,
+      "activated_loras": [
+        "minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors"
+      ],
+      "loras_multipliers": "0.75"
+    }
+  },
+  {
+    "variant": "p10",
+    "prompt": "A",
+    "seconds": 54.2,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h47m26s_seed1234_A cinematic drone shot flying over a coastal road.mp4",
+    "size_mb": 7.93,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 4,
+      "activated_loras": [
+        "minimax_h3_pdmd_4step_lora_avg_rank_57_bf16.safetensors"
+      ],
+      "loras_multipliers": "1.0"
+    }
+  },
+  {
+    "variant": "p2s10",
+    "prompt": "A",
+    "seconds": 32.3,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h47m59s_seed1234_A cinematic drone shot flying over a coastal road.mp4",
+    "size_mb": 7.28,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 2,
+      "activated_loras": [
+        "minimax_h3_pdmd_2step_lora_avg_rank_38_bf16.safetensors"
+      ],
+      "loras_multipliers": "1.0"
+    }
+  },
+  {
+    "variant": "spec0",
+    "prompt": "A",
+    "seconds": 71.8,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h49m10s_seed1234_A cinematic drone shot flying over a coastal road.mp4",
+    "size_mb": 5.63,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 8,
+      "skip_steps_cache_type": "spectrum",
+      "skip_steps_start_step_perc": 0
+    }
+  },
+  {
+    "variant": "spec25",
+    "prompt": "A",
+    "seconds": 69.7,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h50m22s_seed1234_A cinematic drone shot flying over a coastal road.mp4",
+    "size_mb": 4.86,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 8,
+      "skip_steps_cache_type": "spectrum",
+      "skip_steps_start_step_perc": 25
+    }
+  },
+  {
+    "variant": "fbc06",
+    "prompt": "A",
+    "seconds": 89.2,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h51m51s_seed1234_A cinematic drone shot flying over a coastal road.mp4",
+    "size_mb": 5.44,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 8,
+      "skip_steps_cache_type": "first_block",
+      "skip_steps_multiplier": 0.06
+    }
+  },
+  {
+    "variant": "fbc08",
+    "prompt": "A",
+    "seconds": 89.8,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h53m21s_seed1234_A cinematic drone shot flying over a coastal road.mp4",
+    "size_mb": 5.44,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 8,
+      "skip_steps_cache_type": "first_block",
+      "skip_steps_multiplier": 0.08
+    }
+  },
+  {
+    "variant": "fbc10",
+    "prompt": "A",
+    "seconds": 89.7,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h54m50s_seed1234_A cinematic drone shot flying over a coastal road.mp4",
+    "size_mb": 5.44,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 8,
+      "skip_steps_cache_type": "first_block",
+      "skip_steps_multiplier": 0.1
+    }
+  },
+  {
+    "variant": "base8",
+    "prompt": "B",
+    "seconds": 130.3,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h56m59s_seed1234_Close-up of a young woman with curly red hair sitt.mp4",
+    "size_mb": 3.23,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 8
+    }
+  },
+  {
+    "variant": "d10",
+    "prompt": "B",
+    "seconds": 53.2,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h57m52s_seed1234_Close-up of a young woman with curly red hair sitt.mp4",
+    "size_mb": 3.11,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 4,
+      "activated_loras": [
+        "minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors"
+      ],
+      "loras_multipliers": "1.0"
+    }
+  },
+  {
+    "variant": "d10p05",
+    "prompt": "B",
+    "seconds": 56.7,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h58m49s_seed1234_Close-up of a young woman with curly red hair sitt.mp4",
+    "size_mb": 4.21,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 4,
+      "activated_loras": [
+        "minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors",
+        "minimax_h3_pdmd_4step_lora_avg_rank_57_bf16.safetensors"
+      ],
+      "loras_multipliers": "1.0 0.5"
+    }
+  },
+  {
+    "variant": "d075p025",
+    "prompt": "B",
+    "seconds": 57.0,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-01h59m46s_seed1234_Close-up of a young woman with curly red hair sitt.mp4",
+    "size_mb": 3.64,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 4,
+      "activated_loras": [
+        "minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors",
+        "minimax_h3_pdmd_4step_lora_avg_rank_57_bf16.safetensors"
+      ],
+      "loras_multipliers": "0.75 0.25"
+    }
+  },
+  {
+    "variant": "d05p05",
+    "prompt": "B",
+    "seconds": 57.2,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-02h00m43s_seed1234_Close-up of a young woman with curly red hair sitt.mp4",
+    "size_mb": 4.15,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 4,
+      "activated_loras": [
+        "minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors",
+        "minimax_h3_pdmd_4step_lora_avg_rank_57_bf16.safetensors"
+      ],
+      "loras_multipliers": "0.5 0.5"
+    }
+  },
+  {
+    "variant": "d075",
+    "prompt": "B",
+    "seconds": 52.2,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-02h01m37s_seed1234_Close-up of a young woman with curly red hair sitt.mp4",
+    "size_mb": 3.17,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 4,
+      "activated_loras": [
+        "minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors"
+      ],
+      "loras_multipliers": "0.75"
+    }
+  },
+  {
+    "variant": "p10",
+    "prompt": "B",
+    "seconds": 52.7,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-02h02m30s_seed1234_Close-up of a young woman with curly red hair sitt.mp4",
+    "size_mb": 5.23,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 4,
+      "activated_loras": [
+        "minimax_h3_pdmd_4step_lora_avg_rank_57_bf16.safetensors"
+      ],
+      "loras_multipliers": "1.0"
+    }
+  },
+  {
+    "variant": "p2s10",
+    "prompt": "B",
+    "seconds": 32.0,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-02h03m02s_seed1234_Close-up of a young woman with curly red hair sitt.mp4",
+    "size_mb": 5.13,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 2,
+      "activated_loras": [
+        "minimax_h3_pdmd_2step_lora_avg_rank_38_bf16.safetensors"
+      ],
+      "loras_multipliers": "1.0"
+    }
+  },
+  {
+    "variant": "spec0",
+    "prompt": "B",
+    "seconds": 71.0,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-02h04m13s_seed1234_Close-up of a young woman with curly red hair sitt.mp4",
+    "size_mb": 3.35,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 8,
+      "skip_steps_cache_type": "spectrum",
+      "skip_steps_start_step_perc": 0
+    }
+  },
+  {
+    "variant": "spec25",
+    "prompt": "B",
+    "seconds": 70.5,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-02h05m23s_seed1234_Close-up of a young woman with curly red hair sitt.mp4",
+    "size_mb": 3.17,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 8,
+      "skip_steps_cache_type": "spectrum",
+      "skip_steps_start_step_perc": 25
+    }
+  },
+  {
+    "variant": "fbc06",
+    "prompt": "B",
+    "seconds": 89.9,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-02h06m53s_seed1234_Close-up of a young woman with curly red hair sitt.mp4",
+    "size_mb": 3.23,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 8,
+      "skip_steps_cache_type": "first_block",
+      "skip_steps_multiplier": 0.06
+    }
+  },
+  {
+    "variant": "fbc08",
+    "prompt": "B",
+    "seconds": 90.0,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-02h08m23s_seed1234_Close-up of a young woman with curly red hair sitt.mp4",
+    "size_mb": 3.23,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 8,
+      "skip_steps_cache_type": "first_block",
+      "skip_steps_multiplier": 0.08
+    }
+  },
+  {
+    "variant": "fbc10",
+    "prompt": "B",
+    "seconds": 90.6,
+    "file": "C:\\Wan2GP\\benchmarks\\ab-sage3\\out_b6_tune\\2026-10-11-02h09m54s_seed1234_Close-up of a young woman with curly red hair sitt.mp4",
+    "size_mb": 3.23,
+    "errors": [],
+    "settings": {
+      "num_inference_steps": 8,
+      "skip_steps_cache_type": "first_block",
+      "skip_steps_multiplier": 0.1
+    }
+  }
+]
