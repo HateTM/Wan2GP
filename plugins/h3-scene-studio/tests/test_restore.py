@@ -5,7 +5,7 @@ import scene_store as ss
 
 
 def test_is_h3_model():
-    assert ss.is_h3_model("minimax_h3_10eros_max_b5_ref2va")
+    assert ss.is_h3_model("minimax_h3_10eros_max_b6_ref2va")
     assert ss.is_h3_model("minimax_h3_fl2va")
     assert not ss.is_h3_model("ltx2_25_22B_distilled_nvfp4_nsfw")
     assert not ss.is_h3_model("")

@@ -21,9 +21,9 @@ def test_frames_clamps_degenerate_values():
 
 def test_build_task_shape_and_recipe():
     scene = {"settings": {"shotSec": 5, "mood": "shy"}, "photo_set": "мария"}
-    t = ss.build_task("PROMPT", scene, "minimax_h3_10eros_max_b5_ref2va",
+    t = ss.build_task("PROMPT", scene, "minimax_h3_10eros_max_b6_ref2va",
                       ["/x/ref1.jpg", "/x/ref2.jpg", "/x/ref3.jpg"])
-    assert t["model_type"] == "minimax_h3_10eros_max_b5_ref2va"
+    assert t["model_type"] == "minimax_h3_10eros_max_b6_ref2va"
     assert t["prompt"] == "PROMPT"
     assert t["resolution"] == "832x480"
     assert t["num_inference_steps"] == 6

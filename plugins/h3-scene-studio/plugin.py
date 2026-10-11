@@ -378,10 +378,10 @@ class H3SceneStudioPlugin(WAN2GPPlugin):
                 with gr.Row():
                     chain_model_dd = gr.Dropdown(
                         label="Модель для цепочки",
-                        choices=[(m, m) for m in ("minimax_h3_10eros_max_b5_ref2va",
+                        choices=[(m, m) for m in ("minimax_h3_10eros_max_b6_ref2va",
                                                   "minimax_h3_ref2va_pruned",
                                                   "minimax_h3_ref2va")],
-                        value="minimax_h3_10eros_max_b5_ref2va", interactive=True)
+                        value="minimax_h3_10eros_max_b6_ref2va", interactive=True)
                     chain_submit_btn = gr.Button("▶️ Отправить цепочку в очередь",
                                                  elem_classes="h3ss-btn")
                 chain_state = gr.State([])  # mirror of the `chain` python list
