@@ -217,6 +217,7 @@ _FP8_QUANTO_BRIDGE_MODULE = ".fp8_quanto_bridge"
 
 _HANDLER_MODULES = [
     _FP8_QUANTO_BRIDGE_MODULE,
+    "shared.qtypes.nvfp4",
 ]
 _HANDLER_OBJECTS = []
 

@@ -731,7 +731,10 @@ class Int8TensorwiseEmbedding(torch.nn.Embedding):
     def forward(self, input):
         weight = torch.nn.functional.embedding(input, self.weight, self.padding_idx, self.max_norm, self.norm_type,
                                                 self.scale_grad_by_freq, self.sparse).to(self.output_dtype)
-        scale = torch.nn.functional.embedding(input, self.weight_scale).to(self.output_dtype)
+        if self.weight_scale.numel() == 1:
+            scale = self.weight_scale.to(device=weight.device, dtype=self.output_dtype)
+        else:
+            scale = torch.nn.functional.embedding(input, self.weight_scale).to(self.output_dtype)
         return weight.mul_(scale)
 
 
@@ -751,8 +754,10 @@ def apply_pre_quantization(model, state_dict, quantization_map, default_dtype=No
         if not isinstance(module, torch.nn.Embedding):
             raise ValueError(f"Unsupported tensorwise INT8 module: {name}")
         scale = state_dict.get(name + ".weight_scale")
-        if scale is None or tuple(scale.shape) != (module.num_embeddings, 1):
+        if scale is None or (scale.numel() != 1 and tuple(scale.shape) != (module.num_embeddings, 1)):
             raise ValueError(f"Invalid tensorwise INT8 embedding scale: {name}")
+        if scale.numel() == 1:
+            state_dict[name + ".weight_scale"] = scale.reshape(1, 1).expand(module.num_embeddings, 1).contiguous()
         parent_name, child_name = name.rsplit(".", 1)
         setattr(model.get_submodule(parent_name), child_name, Int8TensorwiseEmbedding(module, default_dtype))
         state_dict.pop(key)
