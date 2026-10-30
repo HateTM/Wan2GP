@@ -229,9 +229,15 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                     loras = session.list_loras(model_type)
                 except Exception as exc:
                     loras = {"error": str(exc)}
+                metadata_records = session.list_model_metadata(
+                    include_availability=True,
+                    model_type=model_type,
+                    limit=1,
+                )
+                metadata = metadata_records[0] if metadata_records else session.get_model_metadata(model_type)
                 return {
                     "model": model_def,
-                    "metadata": session.get_model_metadata(model_type, include_availability=True),
+                    "metadata": metadata,
                     "schema": session.get_model_schema(model_type),
                     "defaults": session.get_default_settings(model_type),
                     "presets": presets,
@@ -241,22 +247,6 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 raise
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=f"Could not inspect model {model_type}: {exc}") from exc
-
-        @app.get("/api/queue")
-        def get_queue():
-            session = session_or_503()
-            try:
-                return session.list_queue()
-            except Exception as exc:
-                raise HTTPException(status_code=500, detail=f"Could not read WanGP queue: {exc}") from exc
-
-        @app.post("/api/queue/{queue_id}/cancel")
-        def cancel_queue_item(queue_id: str):
-            session = session_or_503()
-            try:
-                return session.cancel_queue_task(queue_id)
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         @app.get("/api/jobs")
         def list_jobs():
