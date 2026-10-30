@@ -4,8 +4,6 @@
 The plugin deliberately does not call shared.api.init(): Deepy's web_session()
 binds this plugin to the already-running WanGP WebUI queue and runtime.
 """
-from __future__ import annotations
-
 import asyncio
 import json
 import threading
