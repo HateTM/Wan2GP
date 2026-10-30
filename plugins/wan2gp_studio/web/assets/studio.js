@@ -1,6 +1,6 @@
 (() => {
   "use strict";
-  const state = { models: [], selectedModel: null, modelDetail: null, filter: "all", query: "", jobs: new Map(), eventSources: new Map(), zoom: 100 };
+  const state = { models: [], selectedModel: null, modelDetail: null, currentSettings: null, filter: "all", query: "", jobs: new Map(), eventSources: new Map(), zoom: 100 };
   const $ = (id) => document.getElementById(id);
   const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -76,16 +76,43 @@
     $("model-list").querySelectorAll("[data-model]").forEach((button) => button.addEventListener("click", () => selectModel(button.dataset.model)));
   }
 
+  function renderPresets(detail) {
+    const entries = detail.presets && Array.isArray(detail.presets.settings) ? detail.presets.settings : [];
+    const select = $("preset-select");
+    $("preset-count").textContent = entries.length ? String(entries.length) : "";
+    select.innerHTML = entries.length
+      ? entries.map((entry) => {
+          const label = String(entry.id || "").split("/").pop() || entry.id;
+          return '<option value="' + esc(entry.id) + '">' + esc(entry.type || "setting") + " · " + esc(label) + "</option>";
+        }).join("")
+      : '<option value="">No presets available</option>';
+    select.disabled = entries.length === 0;
+    $("load-preset").disabled = entries.length === 0;
+  }
+
+  function renderLoras(detail) {
+    const data = detail.loras || {};
+    const loras = Array.isArray(data.loras) ? data.loras : [];
+    $("lora-count").textContent = data.supported === false ? "N/A" : String(loras.length);
+    $("lora-list").innerHTML = data.supported === false
+      ? '<span class="field-note">This model does not support LoRAs.</span>'
+      : loras.length
+        ? loras.map((name) => '<span class="capability-chip">' + esc(name) + '</span>').join("")
+        : '<span class="field-note">No LoRAs found in the model folder.</span>';
+  }
+
   function renderCapabilities(detail) {
-    const schema = detail.schema || {};
-    const meta = detail.metadata || {};
+    const schema = detail.schema && detail.schema.metadata ? detail.schema.metadata : (detail.schema || {});
+    const meta = detail.metadata || schema;
     const values = [];
-    ["family_label", "base_model_type", "model_type"].forEach((key) => { if (meta[key]) values.push(String(meta[key])); });
-    ["inputs", "main_output", "media_roles"].forEach((key) => {
+    ["family_label", "base_model_type", "model_type", "size", "accelerated"].forEach((key) => {
+      if (meta[key] !== undefined && meta[key] !== null && meta[key] !== "") values.push(String(meta[key]));
+    });
+    ["inputs", "main_output", "media_roles", "specialities"].forEach((key) => {
       const value = schema[key] || meta[key];
       if (Array.isArray(value)) value.forEach((item) => values.push(String(item)));
     });
-    const unique = Array.from(new Set(values)).slice(0, 18);
+    const unique = Array.from(new Set(values)).slice(0, 24);
     $("capability-list").innerHTML = unique.length
       ? unique.map((value) => '<span class="capability-chip">' + esc(value) + '</span>').join("")
       : '<span class="field-note">No additional capability metadata was returned.</span>';
@@ -103,7 +130,7 @@
     $("canvas-hint").hidden = true;
     $("node-model").textContent = modelType;
     try {
-      const detail = await api("/studio/api/models/" + encodeURIComponent(modelType));
+      const detail = await api("api/models/" + encodeURIComponent(modelType));
       if (state.selectedModel !== modelType) return;
       state.modelDetail = detail;
       const model = detail.model || {};
@@ -112,7 +139,10 @@
       $("selected-model-type").textContent = modelType;
       $("node-model").textContent = name;
       $("prompt-input").value = detail.defaults && detail.defaults.prompt || "";
-      $("settings-json").value = JSON.stringify(detail.defaults || { model_type: modelType }, null, 2);
+      state.currentSettings = detail.defaults || { model_type: modelType };
+      $("settings-json").value = JSON.stringify(state.currentSettings, null, 2);
+      renderPresets(detail);
+      renderLoras(detail);
       $("settings-state").textContent = "Native WanGP defaults loaded";
       $("run-from-inspector").disabled = false;
       $("canvas-model-count").textContent = name;
@@ -132,7 +162,7 @@
     $("api-status").textContent = "Loading model catalog…";
     $("runtime-state").textContent = "Loading…";
     try {
-      state.models = await api("/studio/api/models?limit=300");
+      state.models = await api("api/models?limit=300");
       renderModels();
       $("api-status").textContent = state.models.length + " models · WanGP API connected";
       $("runtime-state").textContent = "API ready";
@@ -155,6 +185,30 @@
     return settings;
   }
 
+  async function loadPreset() {
+    if (!state.selectedModel || !$("preset-select").value) return;
+    const modelType = state.selectedModel;
+    const settingId = $("preset-select").value;
+    $("load-preset").disabled = true;
+    $("settings-state").textContent = "Loading native preset…";
+    try {
+      const settings = await api(
+        "api/models/" + encodeURIComponent(modelType) + "/settings?setting_id=" + encodeURIComponent(settingId)
+      );
+      if (state.selectedModel !== modelType) return;
+      state.currentSettings = settings;
+      $("prompt-input").value = settings.prompt || "";
+      $("settings-json").value = JSON.stringify(settings, null, 2);
+      $("settings-state").textContent = "Preset loaded · edits are local until submitted";
+      toast("Preset loaded into the settings editor.");
+    } catch (error) {
+      $("settings-state").textContent = "Could not load preset";
+      toast(error.message, true);
+    } finally {
+      $("load-preset").disabled = false;
+    }
+  }
+
   async function runGeneration() {
     if (!state.selectedModel) return toast("Select a model first.", true);
     let settings;
@@ -163,7 +217,7 @@
     $("run-generation").disabled = true;
     $("run-from-inspector").disabled = true;
     try {
-      const result = await api("/studio/api/jobs", { method: "POST", body: JSON.stringify({ settings }) });
+      const result = await api("api/jobs", { method: "POST", body: JSON.stringify({ settings }) });
       toast("Task submitted to the native WanGP queue.");
       await refreshJobs();
       watchJob(result.job_id);
@@ -196,7 +250,7 @@
 
   async function refreshJobs() {
     try {
-      const records = await api("/studio/api/jobs");
+      const records = await api("api/jobs");
       records.forEach((record) => state.jobs.set(record.id, record));
       renderJobs();
     } catch (_) {}
@@ -204,7 +258,7 @@
 
   async function cancelJob(jobId) {
     try {
-      await api("/studio/api/jobs/" + encodeURIComponent(jobId) + "/cancel", { method: "POST" });
+      await api("api/jobs/" + encodeURIComponent(jobId) + "/cancel", { method: "POST" });
       toast("Cancellation requested.");
       await refreshJobs();
     } catch (error) { toast(error.message, true); }
@@ -212,7 +266,7 @@
 
   function watchJob(jobId) {
     if (!jobId || state.eventSources.has(jobId)) return;
-    const source = new EventSource("/studio/api/jobs/" + encodeURIComponent(jobId) + "/events", { withCredentials: true });
+    const source = new EventSource("api/jobs/" + encodeURIComponent(jobId) + "/events", { withCredentials: true });
     state.eventSources.set(jobId, source);
     source.onmessage = (event) => {
       try {
@@ -249,6 +303,7 @@
     document.querySelectorAll(".library-item").forEach((button) => button.addEventListener("click", () => setFilter(button.dataset.filter)));
     $("refresh-models").addEventListener("click", loadModels);
     $("refresh-queue").addEventListener("click", refreshJobs);
+    $("load-preset").addEventListener("click", loadPreset);
     $("run-generation").addEventListener("click", runGeneration);
     $("run-from-inspector").addEventListener("click", runGeneration);
     $("prompt-input").addEventListener("input", () => {
@@ -265,13 +320,19 @@
     });
     $("reset-settings").addEventListener("click", () => {
       if (!state.modelDetail || !state.modelDetail.defaults) return;
-      $("prompt-input").value = state.modelDetail.defaults.prompt || "";
-      $("settings-json").value = JSON.stringify(state.modelDetail.defaults, null, 2);
+      state.currentSettings = state.modelDetail.defaults;
+      $("prompt-input").value = state.currentSettings.prompt || "";
+      $("settings-json").value = JSON.stringify(state.currentSettings, null, 2);
       $("settings-state").textContent = "Native defaults restored";
     });
     $("clear-selection").addEventListener("click", () => {
-      state.selectedModel = null; state.modelDetail = null;
+      state.selectedModel = null; state.modelDetail = null; state.currentSettings = null;
       $("inspector-empty").hidden = false; $("inspector-editor").hidden = true;
+      $("preset-select").innerHTML = '<option>No presets available</option>';
+      $("preset-select").disabled = true; $("load-preset").disabled = true;
+      $("preset-count").textContent = ""; $("lora-count").textContent = "";
+      $("lora-list").innerHTML = '<span class="field-note">Select a model to inspect its LoRAs.</span>';
+      $("capability-list").innerHTML = "";
       $("generation-node").hidden = true; $("canvas-hint").hidden = false;
       $("run-from-inspector").disabled = true; $("canvas-model-count").textContent = "No node selected";
       $("settings-state").textContent = "No model selected"; renderModels();
