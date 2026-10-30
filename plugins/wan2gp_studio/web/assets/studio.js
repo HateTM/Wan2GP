@@ -34,16 +34,16 @@
     return "other";
   }
 
-  function available(model) {
+  function availabilityStatus(model) {
     const value = model.availability || model.metadata && model.metadata.availability;
-    if (typeof value === "boolean") return value;
+    if (typeof value === "boolean") return value ? "available" : "missing";
     if (value && typeof value === "object") {
-      if ("available" in value) return Boolean(value.available);
-      if ("ready" in value) return Boolean(value.ready);
-      const entries = Object.values(value);
-      if (entries.length && entries.every((entry) => typeof entry === "boolean")) return entries.every(Boolean);
+      const status = String(value.status || "").toLowerCase();
+      if (status === "available" || value.available === true || value.ready === true) return "available";
+      if (status === "partial") return "partial";
+      if (status === "missing" || value.available === false) return "missing";
     }
-    return false;
+    return "unknown";
   }
 
   function renderModels() {
@@ -67,10 +67,12 @@
       const kind = category(model);
       const family = model.family || model.metadata && (model.metadata.family_label || model.metadata.family) || kind;
       const selected = state.selectedModel === type ? " selected" : "";
-      const ready = available(model) ? " available" : "";
+      const availability = availabilityStatus(model);
+      const availabilityClass = availability === "available" ? " available" : availability === "partial" ? " partial" : "";
+      const availabilityTitle = availability === "available" ? "Model files available" : availability === "partial" ? "Model files partially available" : availability === "missing" ? "Model files missing" : "Availability not confirmed";
       return '<button class="model-card' + selected + '" data-model="' + esc(type) + '">' +
         '<span class="model-card-top"><i class="model-indicator ' + kind + '"></i><span class="model-card-name">' + esc(name) +
-        '</span><i class="availability' + ready + '" title="' + (ready ? "Available" : "Availability not confirmed") + '"></i></span>' +
+        '</span><i class="availability' + availabilityClass + '" title="' + availabilityTitle + '"></i></span>' +
         '<span class="model-card-meta">' + esc(family) + ' · ' + esc(type) + '</span></button>';
     }).join("");
     $("model-list").querySelectorAll("[data-model]").forEach((button) => button.addEventListener("click", () => selectModel(button.dataset.model)));
@@ -180,8 +182,11 @@
     try { settings = JSON.parse($("settings-json").value); }
     catch (error) { throw new Error("Settings JSON is invalid: " + error.message); }
     if (!settings || typeof settings !== "object" || Array.isArray(settings)) throw new Error("Settings must be a JSON object.");
+    if (settings.model_type && settings.model_type !== state.selectedModel) {
+      throw new Error("To change model_type, select the model from the library first.");
+    }
+    settings.model_type = state.selectedModel;
     settings.prompt = $("prompt-input").value;
-    if (!settings.model_type && state.selectedModel) settings.model_type = state.selectedModel;
     return settings;
   }
 
@@ -271,11 +276,14 @@
     source.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data);
+        const previous = state.jobs.get(jobId) || { id: jobId };
         if (message.kind === "progress") {
-          const previous = state.jobs.get(jobId) || { id: jobId };
           state.jobs.set(jobId, Object.assign({}, previous, {
             progress: message.data.progress, phase: message.data.phase, message: message.data.status, status: "running"
           }));
+          renderJobs();
+        } else if (message.kind === "status") {
+          state.jobs.set(jobId, Object.assign({}, previous, { message: message.data.message || previous.message }));
           renderJobs();
         }
       } catch (_) {}
@@ -313,6 +321,15 @@
         settings.prompt = $("prompt-input").value;
         $("settings-json").value = JSON.stringify(settings, null, 2);
       } catch (_) {}
+    });
+    $("settings-json").addEventListener("input", () => {
+      try {
+        const settings = JSON.parse($("settings-json").value || "{}");
+        $("prompt-input").value = typeof settings.prompt === "string" ? settings.prompt : "";
+        $("settings-state").textContent = "Unsaved edits";
+      } catch (_) {
+        $("settings-state").textContent = "Invalid settings JSON";
+      }
     });
     $("format-json").addEventListener("click", () => {
       try { $("settings-json").value = JSON.stringify(JSON.parse($("settings-json").value), null, 2); toast("Settings JSON formatted."); }
