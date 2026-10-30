@@ -294,14 +294,20 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 job_id = uuid.uuid4().hex
                 record = _JobRecord(job_id, model_type, prompt)
                 with jobs_lock:
+                    terminal = {"completed", "failed", "cancelled"}
+                    finished = [
+                        key for key, value in sorted(jobs.items(), key=lambda pair: pair[1].created_at)
+                        if value.snapshot()["status"] in terminal
+                    ]
+                    for key in finished[: max(0, len(jobs) - 49)]:
+                        jobs.pop(key, None)
+                    active_count = sum(
+                        value.snapshot()["status"] not in terminal
+                        for value in jobs.values()
+                    )
+                    if active_count >= 50:
+                        raise HTTPException(status_code=429, detail="WanGP Studio already has 50 queued or running jobs.")
                     jobs[job_id] = record
-                    if len(jobs) > 50:
-                        finished = [
-                            key for key, value in sorted(jobs.items(), key=lambda pair: pair[1].created_at)
-                            if value.snapshot()["status"] in {"completed", "failed", "cancelled"}
-                        ]
-                        for key in finished[: max(0, len(jobs) - 50)]:
-                            jobs.pop(key, None)
 
                 record.status = "queued"
                 record.message = "Waiting in WanGP queue"
