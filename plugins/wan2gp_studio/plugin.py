@@ -202,7 +202,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             session = session_or_503()
             try:
                 return session.list_model_metadata(
-                    include_availability=True,
+                    include_availability=False,
                     include_selection=True,
                     query=q or None,
                     family=family or None,
