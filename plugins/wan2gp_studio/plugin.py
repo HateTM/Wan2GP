@@ -280,10 +280,10 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                         for key in finished[: max(0, len(jobs) - 50)]:
                             jobs.pop(key, None)
 
-                job = session.submit_task(settings, callbacks=_StudioCallbacks(record))
-                record.session_job = job
                 record.status = "queued"
                 record.message = "Waiting in WanGP queue"
+                job = session.submit_task(settings, callbacks=_StudioCallbacks(record))
+                record.session_job = job
                 record.emit("queued", {"job_id": job_id, "model_type": model_type})
 
                 def collect_result():
