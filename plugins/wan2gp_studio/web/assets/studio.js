@@ -96,11 +96,13 @@
     const data = detail.loras || {};
     const loras = Array.isArray(data.loras) ? data.loras : [];
     $("lora-count").textContent = data.supported === false ? "N/A" : String(loras.length);
-    $("lora-list").innerHTML = data.supported === false
-      ? '<span class="field-note">This model does not support LoRAs.</span>'
-      : loras.length
-        ? loras.map((name) => '<span class="capability-chip">' + esc(name) + '</span>').join("")
-        : '<span class="field-note">No LoRAs found in the model folder.</span>';
+    $("lora-list").innerHTML = data.error
+      ? '<span class="field-note">' + esc(data.error) + '</span>'
+      : data.supported === false
+        ? '<span class="field-note">This model does not support LoRAs.</span>'
+        : loras.length
+          ? loras.map((name) => '<span class="capability-chip">' + esc(name) + '</span>').join("")
+          : '<span class="field-note">No LoRAs found in the model folder.</span>';
   }
 
   function renderCapabilities(detail) {
@@ -154,6 +156,7 @@
       renderModels();
       renderCapabilities(detail);
     } catch (error) {
+      if (state.selectedModel !== modelType) return;
       $("settings-state").textContent = "Could not load model";
       $("node-status").textContent = "Error";
       toast(error.message, true);
@@ -210,7 +213,9 @@
       $("settings-state").textContent = "Could not load preset";
       toast(error.message, true);
     } finally {
-      $("load-preset").disabled = false;
+      if (state.selectedModel === modelType) {
+        $("load-preset").disabled = !$("preset-select").value;
+      }
     }
   }
 
@@ -230,7 +235,7 @@
       toast(error.message, true);
     } finally {
       $("run-generation").disabled = false;
-      $("run-from-inspector").disabled = false;
+      $("run-from-inspector").disabled = !(state.selectedModel && state.modelDetail);
     }
   }
 
@@ -256,6 +261,7 @@
   async function refreshJobs() {
     try {
       const records = await api("api/jobs");
+      state.jobs.clear();
       records.forEach((record) => state.jobs.set(record.id, record));
       renderJobs();
     } catch (_) {}
