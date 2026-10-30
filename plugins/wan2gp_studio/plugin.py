@@ -152,6 +152,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         from fastapi import FastAPI, HTTPException, Request
         from fastapi.responses import FileResponse, StreamingResponse
         from fastapi.staticfiles import StaticFiles
+        from starlette.concurrency import run_in_threadpool
 
         web_dir = Path(__file__).resolve().parent / "web"
         assets_dir = web_dir / "assets"
@@ -265,7 +266,8 @@ class WanGPStudioPlugin(WAN2GPPlugin):
 
             session = session_or_503()
             try:
-                if session.get_model_def(model_type) is None:
+                model_def = await run_in_threadpool(session.get_model_def, model_type)
+                if model_def is None:
                     raise HTTPException(status_code=400, detail=f"Unknown model_type: {model_type}")
                 prompt = str(settings.get("prompt") or "")
                 job_id = uuid.uuid4().hex
@@ -283,7 +285,11 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 record.status = "queued"
                 record.message = "Waiting in WanGP queue"
                 try:
-                    job = session.submit_task(settings, callbacks=_StudioCallbacks(record))
+                    job = await run_in_threadpool(
+                        session.submit_task,
+                        settings,
+                        callbacks=_StudioCallbacks(record),
+                    )
                 except Exception as exc:
                     with record._lock:
                         record.status = "failed"
