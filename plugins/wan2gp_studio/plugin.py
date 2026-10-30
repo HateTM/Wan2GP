@@ -323,7 +323,8 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                     finally:
                         # SessionJob may retain GenerationResult artifacts (including large tensors).
                         # Drop the handle once completion has been reduced to lightweight metadata.
-                        record.session_job = None
+                        with record._lock:
+                            record.session_job = None
                         record.emit("closed", {"job_id": job_id})
 
                 threading.Thread(
@@ -343,10 +344,12 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 record = jobs.get(job_id)
             if record is None:
                 raise HTTPException(status_code=404, detail="Studio job not found.")
-            if record.session_job is None:
+            with record._lock:
+                session_job = record.session_job
+            if session_job is None:
                 raise HTTPException(status_code=409, detail="Job has not been admitted by WanGP yet.")
             try:
-                record.session_job.cancel()
+                session_job.cancel()
                 record.emit("cancel_requested", {"job_id": job_id})
                 return {"job_id": job_id, "status": "cancellation_requested"}
             except Exception as exc:
