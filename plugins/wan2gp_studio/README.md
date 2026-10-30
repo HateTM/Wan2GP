@@ -29,7 +29,6 @@ The web app is registered through WAN2GPPlugin.register_web_app() and is served 
 - Single-task submission through the native WanGP queue.
 - Job progress, status, completion, errors and cancellation through the existing API.
 - SSE progress stream with keep-alive comments and a bounded in-memory job history.
-- Recent Studio job history in a bounded in-memory list.
 
 The first frontend is deliberately a lightweight bootstrap. The visual node canvas is currently a single generation-node workspace; graph editing, workflow persistence, multi-node execution, media editors, a real gallery browser and RAM/VRAM telemetry are follow-up milestones. The queue panel shows Studio-submitted jobs, not every task submitted from the native WanGP UI.
 
