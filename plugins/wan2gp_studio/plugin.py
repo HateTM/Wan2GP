@@ -201,8 +201,8 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             session = session_or_503()
             try:
                 return session.list_model_metadata(
-                    include_availability=True,
-                    include_selection=True,
+                    include_availability=False,
+                    include_selection=False,
                     query=q or None,
                     family=family or None,
                     inputs=inputs or None,
