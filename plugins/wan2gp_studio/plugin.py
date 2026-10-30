@@ -201,8 +201,8 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             session = session_or_503()
             try:
                 return session.list_model_metadata(
-                    include_availability=False,
-                    include_selection=False,
+                    include_availability=True,
+                    include_selection=True,
                     query=q or None,
                     family=family or None,
                     inputs=inputs or None,
@@ -221,7 +221,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 if model_def is None:
                     raise HTTPException(status_code=404, detail=f"Unknown model_type: {model_type}")
                 try:
-                    presets = session.get_model_settings(model_type)
+                    presets = session.get_model_settings(model_type, include_selection=True)
                 except Exception as exc:
                     presets = {"error": str(exc), "settings": []}
                 try:
@@ -246,6 +246,27 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 raise
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=f"Could not inspect model {model_type}: {exc}") from exc
+
+        @app.get("/api/models/{model_type}/settings")
+        def get_model_setting(model_type: str, setting_id: str):
+            session = session_or_503()
+            try:
+                selected = session.get_model_settings(
+                    model_type,
+                    setting_id=setting_id,
+                    include_selection=True,
+                )
+                settings = selected.get("content")
+                if not isinstance(settings, dict):
+                    raise HTTPException(status_code=422, detail="The selected preset does not contain a settings object.")
+                settings.setdefault("model_type", model_type)
+                return session.merge_settings_with_defaults(settings)
+            except HTTPException:
+                raise
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"Could not load model settings: {exc}") from exc
 
         @app.get("/api/jobs")
         def list_jobs():
@@ -284,6 +305,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
 
                 record.status = "queued"
                 record.message = "Waiting in WanGP queue"
+                record.emit("queued", {"job_id": job_id, "model_type": model_type})
                 try:
                     job = await run_in_threadpool(
                         session.submit_task,
@@ -298,8 +320,8 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                         record.updated_at = time.time()
                     record.emit("error", {"message": str(exc)})
                     raise
-                record.session_job = job
-                record.emit("queued", {"job_id": job_id, "model_type": model_type})
+                with record._lock:
+                    record.session_job = job
 
                 def collect_result():
                     try:
@@ -372,6 +394,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
 
             async def stream_events():
                 cursor = 0
+                last_heartbeat = time.monotonic()
                 while True:
                     events, latest = record.events_after(cursor)
                     for event in events:
@@ -381,6 +404,9 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                     if snapshot["status"] in {"completed", "failed", "cancelled"} and cursor >= latest:
                         yield "event: end\ndata: {}\n\n"
                         break
+                    if time.monotonic() - last_heartbeat >= 15:
+                        yield ": keep-alive\n\n"
+                        last_heartbeat = time.monotonic()
                     await asyncio.sleep(0.35)
 
             return StreamingResponse(
