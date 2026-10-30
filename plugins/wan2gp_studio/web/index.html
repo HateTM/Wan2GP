@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>WanGP Studio</title>
-  <link rel="stylesheet" href="/studio/assets/studio.css">
-  <script src="/studio/assets/studio.js" defer></script>
+  <link rel="stylesheet" href="assets/studio.css">
+  <script src="assets/studio.js" defer></script>
 </head>
 <body>
 <div class="app-shell">
@@ -53,7 +53,7 @@
           <div class="panel-header"><div><span class="panel-kicker">NODE LIBRARY</span><h2>Models</h2></div><span class="count-chip" id="model-count">—</span></div>
           <label class="search-box"><span>⌕</span><input id="model-search" type="search" placeholder="Search installed models…"><kbd>/</kbd></label>
           <div class="filter-row" id="model-filters">
-            <button class="filter-chip selected" data-filter="all">All</button><button class="filter-chip" data-filter="video">Video</button><button class="filter-chip" data-filter="image">Image</button><button class="filter-chip" data-filter="audio">Audio</button>
+            <button class="filter-chip selected" data-filter="all">All</button><button class="filter-chip" data-filter="video">Video</button><button class="filter-chip" data-filter="image">Image</button><button class="filter-chip" data-filter="audio">Audio</button><button class="filter-chip" data-filter="3d">3D</button>
           </div>
           <div class="model-list" id="model-list"><div class="empty-state">Loading model catalog…</div></div>
         </section>
@@ -85,6 +85,15 @@
                 <div class="settings-toolbar"><span>Full WanGP settings JSON</span><button id="format-json">Format</button></div>
                 <textarea id="settings-json" class="json-editor" spellcheck="false" rows="12"></textarea>
                 <p class="field-note">Advanced parameters are preserved. Edit the JSON to access model-specific options not shown as simple controls.</p>
+              </div>
+              <div class="inspector-section">
+                <div class="section-title"><span>PRESETS &amp; PROFILES</span><span id="preset-count"></span></div>
+                <div class="preset-row"><select id="preset-select" class="preset-select" disabled><option>No presets available</option></select><button class="button button-quiet preset-load" id="load-preset" disabled>Load</button></div>
+                <p class="field-note">Loads the selected native WanGP preset into the full settings editor.</p>
+              </div>
+              <div class="inspector-section">
+                <div class="section-title"><span>INSTALLED LORAS</span><span id="lora-count"></span></div>
+                <div class="capability-list" id="lora-list"><span class="field-note">Select a model to inspect its LoRAs.</span></div>
               </div>
               <div class="inspector-section"><div class="section-title"><span>MODEL CAPABILITIES</span></div><div class="capability-list" id="capability-list"></div></div>
             </div>
