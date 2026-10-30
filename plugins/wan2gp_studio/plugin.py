@@ -282,7 +282,16 @@ class WanGPStudioPlugin(WAN2GPPlugin):
 
                 record.status = "queued"
                 record.message = "Waiting in WanGP queue"
-                job = session.submit_task(settings, callbacks=_StudioCallbacks(record))
+                try:
+                    job = session.submit_task(settings, callbacks=_StudioCallbacks(record))
+                except Exception as exc:
+                    with record._lock:
+                        record.status = "failed"
+                        record.errors.append(str(exc))
+                        record.message = str(exc)
+                        record.updated_at = time.time()
+                    record.emit("error", {"message": str(exc)})
+                    raise
                 record.session_job = job
                 record.emit("queued", {"job_id": job_id, "model_type": model_type})
 
@@ -306,6 +315,9 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                             record.updated_at = time.time()
                         record.emit("error", {"message": str(exc)})
                     finally:
+                        # SessionJob may retain GenerationResult artifacts (including large tensors).
+                        # Drop the handle once completion has been reduced to lightweight metadata.
+                        record.session_job = None
                         record.emit("closed", {"job_id": job_id})
 
                 threading.Thread(
