@@ -18,7 +18,7 @@ WanGP Studio is a lightweight, full-screen plugin frontend for the existing WanG
 3. Restart WanGP.
 4. Open /studio/ on the same WanGP host.
 
-The web app is registered through WAN2GPPlugin.register_web_app() and is served by the existing WanGP server behind its authentication.
+The web app is registered through WAN2GPPlugin.register_web_app() and is served by the existing WanGP server behind its authentication. The plugin metadata declares WanGP 18.84 as its minimum supported version, matching the API surface used by this implementation.
 
 ## v0.1 scope
 
