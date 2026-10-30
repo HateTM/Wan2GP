@@ -234,6 +234,8 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                     limit=1,
                 )
                 metadata = metadata_records[0] if metadata_records else session.get_model_metadata(model_type)
+                if metadata is not None:
+                    metadata.update(session.get_model_selection_metadata(model_type))
                 return {
                     "model": model_def,
                     "metadata": metadata,
