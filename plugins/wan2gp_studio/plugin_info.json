@@ -4,6 +4,6 @@
   "version": "0.1.0",
   "description": "Lightweight full-screen workspace for WanGP model discovery and generation.",
   "date": "2026-10-30",
-  "wan2gp_version": "",
+  "wan2gp_version": "18.84",
   "type": ["app"]
 }
