@@ -1,0 +1,425 @@
+diff -ru --strip-trailing-cr a/_vendor/llama.cpp/ggml/src/ggml-cuda/common.cuh b/_vendor/llama.cpp/ggml/src/ggml-cuda/common.cuh
+--- a/_vendor/llama.cpp/ggml/src/ggml-cuda/common.cuh	2026-10-11 02:35:00.497980700 +0300
++++ b/_vendor/llama.cpp/ggml/src/ggml-cuda/common.cuh	2026-10-11 02:35:00.538712600 +0300
+@@ -1709,3 +1709,15 @@
+     kernel<<<launch_params.block_nums, launch_params.block_dims, launch_params.shmem, launch_params.stream>>>(std::forward<Args>(args)... );
+     CUDA_CHECK(cudaGetLastError());
+ }
++
++// Q8_1 ds: FP16 scale d in the low half, exact int16 sum of the quantized int8 values in the high half
++// (the dequantized block sum is reconstructed in FP32 as d*sum_q, so it cannot overflow FP16).
++static __device__ __forceinline__ half2 make_q8_1_ds(const float d, const int sum_q) {
++    union {
++        half2    h;
++        uint32_t u;
++    } ds;
++    ds.h = make_half2(d, 0.0f);
++    ds.u = (ds.u & 0x0000FFFFu) | ((uint32_t) (uint16_t) (int16_t) sum_q << 16);
++    return ds.h;
++}
+diff -ru --strip-trailing-cr a/_vendor/llama.cpp/ggml/src/ggml-cuda/mmq-vec-dot.cuh b/_vendor/llama.cpp/ggml/src/ggml-cuda/mmq-vec-dot.cuh
+--- a/_vendor/llama.cpp/ggml/src/ggml-cuda/mmq-vec-dot.cuh	2026-10-11 02:35:01.226427200 +0300
++++ b/_vendor/llama.cpp/ggml/src/ggml-cuda/mmq-vec-dot.cuh	2026-10-11 02:35:01.144518500 +0300
+@@ -51,7 +51,7 @@
+ 
+                 sum[j0/nwarps*I/warp_size + i0/warp_size] += vec_dot_q4_0_q8_1_impl<VDR_Q4_0_Q8_1_MMQ>
+                     (&x_qs[i*(MMQ_TILE_NE_K + 1) + k0/QR4_0], u,
+-                     x_df[i*(MMQ_TILE_NE_K/QI4_0) + i/QI4_0 + k0/(QR4_0*QI4_0)], y_ds[j*MMQ_TILE_Y_K + k01/QI8_1]);
++                     x_df[i*(MMQ_TILE_NE_K/QI4_0) + i/QI4_0 + k0/(QR4_0*QI4_0)], q8_1_d_from_ds(y_ds[j*MMQ_TILE_Y_K + k01/QI8_1]), q8_1_sum_from_ds(y_ds[j*MMQ_TILE_Y_K + k01/QI8_1]));
+             }
+         }
+     }
+@@ -101,7 +101,7 @@
+ 
+                 sum[j0/nwarps*I/warp_size + i0/warp_size] += vec_dot_q4_1_q8_1_impl<VDR_Q4_1_Q8_1_MMQ>
+                     (&x_qs[i*(MMQ_TILE_NE_K + 1) + k0/QR4_1], u,
+-                     x_dm[i*(MMQ_TILE_NE_K/QI4_1) + i/QI4_1 + k0/(QR4_1*QI4_1)], y_ds[j*MMQ_TILE_Y_K + k01/QI8_1]);
++                     x_dm[i*(MMQ_TILE_NE_K/QI4_1) + i/QI4_1 + k0/(QR4_1*QI4_1)], q8_1_d_from_ds(y_ds[j*MMQ_TILE_Y_K + k01/QI8_1]), q8_1_sum_from_ds(y_ds[j*MMQ_TILE_Y_K + k01/QI8_1]));
+             }
+         }
+     }
+@@ -306,7 +306,7 @@
+ 
+                 sum[j0/nwarps*I/warp_size + i0/warp_size] += vec_dot_q8_1_q8_1_impl<QR5_1*VDR_Q5_1_Q8_1_MMQ>
+                     (&x_qs[i*(2*MMQ_TILE_NE_K + 1) + k0], &y_qs[j*MMQ_TILE_Y_K + k01],
+-                    x_dm[i*(MMQ_TILE_NE_K/QI5_1) + i/QI5_1 + k0/QI8_1], y_ds[j*MMQ_TILE_Y_K + k01/QI8_1]);
++                    x_dm[i*(MMQ_TILE_NE_K/QI5_1) + i/QI5_1 + k0/QI8_1], q8_1_d_from_ds(y_ds[j*MMQ_TILE_Y_K + k01/QI8_1]), q8_1_sum_from_ds(y_ds[j*MMQ_TILE_Y_K + k01/QI8_1]));
+             }
+         }
+     }
+@@ -349,7 +349,8 @@
+             load_ldmatrix(B, y_qs + j0*MMQ_TILE_Y_K + k01, MMQ_TILE_Y_K);
+ 
+             const int j = j0 + tile_C::get_j(0);
+-            const float2 dsB = __half22float2(y_dm[j*MMQ_TILE_Y_K + k01/QI8_1]);
++            const half2 dsB_h = y_dm[j*MMQ_TILE_Y_K + k01/QI8_1];
++            const float2 dsB = make_float2(q8_1_d_from_ds(dsB_h), q8_1_sum_from_ds(dsB_h));
+ 
+ #pragma unroll
+             for (int n = 0; n < ntx; ++n) {
+@@ -423,7 +424,8 @@
+             for (int l = 0; l < tile_C::ne/2; ++l) {
+                 const int j = j0 + tile_C::get_j(l);
+ 
+-                dsB[l] = __half22float2(y_dm[j*MMQ_TILE_Y_K + k01/QI8_1]);
++                const half2 dsB_h = y_dm[j*MMQ_TILE_Y_K + k01/QI8_1];
++                dsB[l] = make_float2(q8_1_d_from_ds(dsB_h), q8_1_sum_from_ds(dsB_h));
+             }
+ 
+ #pragma unroll
+diff -ru --strip-trailing-cr a/_vendor/llama.cpp/ggml/src/ggml-cuda/quantize.cu b/_vendor/llama.cpp/ggml/src/ggml-cuda/quantize.cu
+--- a/_vendor/llama.cpp/ggml/src/ggml-cuda/quantize.cu	2026-10-11 02:35:00.699980400 +0300
++++ b/_vendor/llama.cpp/ggml/src/ggml-cuda/quantize.cu	2026-10-11 02:35:00.739269200 +0300
+@@ -90,6 +90,7 @@
+ 
+     const float  d = amax / 127.0f;
+     const int8_t q = amax == 0.0f ? 0 : roundf(xi / d);
++    const int sum_q = warp_reduce_sum<QK8_1>((int) q);
+ 
+     y[ib].qs[iqs] = q;
+ 
+@@ -97,7 +98,7 @@
+         return;
+     }
+ 
+-    y[ib].ds = make_half2(d, sum);
++    y[ib].ds = make_q8_1_ds(d, sum_q);
+ }
+ 
+ __device__ __forceinline__ uint8_t compute_e8m0_scale(float amax) {
+@@ -520,6 +521,15 @@
+     q.w = roundf(xi.w*d_inv);
+     const float d = 1.0f / d_inv;
+ 
++    int sum_q = 0;
++    if (ds_layout == MMQ_Q8_1_DS_LAYOUT_DS4) {
++        sum_q = q.x + q.y + q.z + q.w;
++#pragma unroll
++        for (int offset = vals_per_sum/8; offset > 0; offset >>= 1) {
++            sum_q += __shfl_xor_sync(0xFFFFFFFF, sum_q, offset, WARP_SIZE);
++        }
++    }
++
+     // write the block once (normal) or to each of the token's compact rows (scatter)
+     const int nwrite = scatter ? n_expert_used : 1;
+ #pragma unroll
+@@ -546,7 +556,7 @@
+             }
+         } else if (iqs % 32 == 0) {
+             if (ds_layout == MMQ_Q8_1_DS_LAYOUT_DS4) {
+-                y[ib].ds4[iqs/32] = make_half2(d, sum);
++                y[ib].ds4[iqs/32] = make_q8_1_ds(d, sum_q);
+             } else {
+                 y[ib].d4[iqs/32]  = d;
+             }
+diff -ru --strip-trailing-cr a/_vendor/llama.cpp/ggml/src/ggml-cuda/vecdotq.cuh b/_vendor/llama.cpp/ggml/src/ggml-cuda/vecdotq.cuh
+--- a/_vendor/llama.cpp/ggml/src/ggml-cuda/vecdotq.cuh	2026-10-11 02:35:01.212427300 +0300
++++ b/_vendor/llama.cpp/ggml/src/ggml-cuda/vecdotq.cuh	2026-10-11 02:35:00.943360100 +0300
+@@ -28,6 +28,23 @@
+     return ((const int *) x)[i32]; // assume at least 4 byte alignment
+ }
+ 
++static __device__ __forceinline__ int q8_1_sum_qs_from_ds(const half2 & ds) {
++    union {
++        half2    h;
++        uint32_t u;
++    } tmp;
++    tmp.h = ds;
++    return (int16_t) (tmp.u >> 16);
++}
++
++static __device__ __forceinline__ float q8_1_d_from_ds(const half2 & ds) {
++    return __low2float(ds);
++}
++
++static __device__ __forceinline__ float q8_1_sum_from_ds(const half2 & ds) {
++    return q8_1_d_from_ds(ds) * q8_1_sum_qs_from_ds(ds);
++}
++
+ // q4 contains 8 indices with 4 bit each.
+ // This function selects those bytes from table that are at those indices and returns them as int2.
+ // The first int contains the bytes with even indices in q4, the second int contains the bytes with odd indices in q4.
+@@ -119,7 +136,7 @@
+ #define VDR_Q4_0_Q8_1_MMQ  4
+ 
+ template <int vdr> static __device__ __forceinline__ float vec_dot_q4_0_q8_1_impl(
+-    const int * v, const int * u, const float & d4, const half2 & ds8) {
++    const int * v, const int * u, const float & d4, const float & d8, const float & s8) {
+ 
+     int sumi = 0;
+ 
+@@ -133,17 +150,15 @@
+         sumi = ggml_cuda_dp4a(vi1, u[2*i+1], sumi);
+     }
+ 
+-    const float2 ds8f = __half22float2(ds8);
+-
+     // second part effectively subtracts 8 from each quant value
+-    return d4 * (sumi * ds8f.x - (8*vdr/QI4_0) * ds8f.y);
++    return d4 * (sumi * d8 - (8*vdr/QI4_0) * s8);
+ }
+ 
+ #define VDR_Q4_1_Q8_1_MMVQ 2
+ #define VDR_Q4_1_Q8_1_MMQ  4
+ 
+ template <int vdr> static __device__ __forceinline__ float vec_dot_q4_1_q8_1_impl(
+-    const int * v, const int * u, const half2 & dm4, const half2 & ds8) {
++    const int * v, const int * u, const half2 & dm4, const float & d8, const float & s8) {
+ 
+     int sumi = 0;
+ 
+@@ -157,16 +172,9 @@
+         sumi = ggml_cuda_dp4a(vi1, u[2*i+1], sumi);
+     }
+ 
+-#ifdef FAST_FP16_AVAILABLE
+-    const float2 tmp = __half22float2(__hmul2(dm4, ds8));
+-    const float d4d8 = tmp.x;
+-    const float m4s8 = tmp.y;
+-#else
+     const float2 dm4f = __half22float2(dm4);
+-    const float2 ds8f = __half22float2(ds8);
+-    const float d4d8 = dm4f.x * ds8f.x;
+-    const float m4s8 = dm4f.y * ds8f.y;
+-#endif // FAST_FP16_AVAILABLE
++    const float d4d8 = dm4f.x * d8;
++    const float m4s8 = dm4f.y * s8;
+ 
+     // scale second part of sum by QI8_1/(vdr * QR4_1) to compensate for multiple threads adding it
+     return sumi * d4d8 + m4s8 / (QI8_1 / (vdr * QR4_1));
+@@ -176,7 +184,7 @@
+ #define VDR_Q5_0_Q8_1_MMQ  4
+ 
+ template <int vdr> static __device__ __forceinline__ float vec_dot_q5_0_q8_1_impl(
+-    const int * vl, const int * vh, const int * u, const float & d5, const half2 & ds8) {
++    const int * vl, const int * vh, const int * u, const float & d5, const float & d8, const float & s8) {
+ 
+     int sumi = 0;
+ 
+@@ -197,17 +205,16 @@
+         sumi = ggml_cuda_dp4a(vi1, u[2*i+1], sumi); // SIMD dot product of quantized values
+     }
+ 
+-    const float2 ds8f = __half22float2(ds8);
+-
+-    // second part effectively subtracts 16 from each quant value
+-    return d5 * (sumi * ds8f.x - (16*vdr/QI5_0) * ds8f.y);
++    // second part effectively subtracts 16 from each quant value. The q8_1 sum
++    // is reconstructed in FP32 from the int16 sum of quantized values stored in ds.y.
++    return d5 * (sumi * d8 - (16*vdr/QI5_0) * s8);
+ }
+ 
+ #define VDR_Q5_1_Q8_1_MMVQ 2
+ #define VDR_Q5_1_Q8_1_MMQ  4
+ 
+ template <int vdr> static __device__ __forceinline__ float vec_dot_q5_1_q8_1_impl(
+-    const int * vl, const int * vh, const int * u, const half2 & dm5, const half2 & ds8) {
++    const int * vl, const int * vh, const int * u, const half2 & dm5, const float & d8, const float & s8) {
+ 
+     int sumi = 0;
+ 
+@@ -228,16 +235,9 @@
+         sumi = ggml_cuda_dp4a(vi1, u[2*i+1], sumi); // SIMD dot product of quantized values
+     }
+ 
+-#ifdef FAST_FP16_AVAILABLE
+-    const float2 tmp = __half22float2(__hmul2(dm5, ds8));
+-    const float d5d8 = tmp.x;
+-    const float m5s8 = tmp.y;
+-#else
+     const float2 dm5f = __half22float2(dm5);
+-    const float2 ds8f = __half22float2(ds8);
+-    const float d5d8 = dm5f.x * ds8f.x;
+-    const float m5s8 = dm5f.y * ds8f.y;
+-#endif // FAST_FP16_AVAILABLE
++    const float d5d8 = dm5f.x * d8;
++    const float m5s8 = dm5f.y * s8;
+ 
+     // scale second part of sum by QI5_1 / vdr to compensate for multiple threads adding it
+     return sumi*d5d8 + m5s8 / (QI5_1 / vdr);
+@@ -261,7 +261,7 @@
+ }
+ 
+ template <int vdr> static __device__ __forceinline__ float vec_dot_q8_1_q8_1_impl(
+-    const int * v, const int * u, const half2 & dm8, const half2 & ds8) {
++    const int * v, const int * u, const half2 & dm8, const float & d8, const float & s8) {
+ 
+     int sumi = 0;
+ 
+@@ -271,16 +271,9 @@
+         sumi = ggml_cuda_dp4a(v[i], u[i], sumi);
+     }
+ 
+-#ifdef FAST_FP16_AVAILABLE
+-    const float2 tmp = __half22float2(__hmul2(dm8, ds8));
+-    const float d8d8 = tmp.x;
+-    const float m8s8 = tmp.y;
+-#else
+     const float2 dm8f = __half22float2(dm8);
+-    const float2 ds8f = __half22float2(ds8);
+-    const float d8d8 = dm8f.x * ds8f.x;
+-    const float m8s8 = dm8f.y * ds8f.y;
+-#endif // FAST_FP16_AVAILABLE
++    const float d8d8 = dm8f.x * d8;
++    const float m8s8 = dm8f.y * s8;
+ 
+     // scale second part of sum by QI8_1/ vdr to compensate for multiple threads adding it
+     return sumi*d8d8 + m8s8 / (QI8_1 / vdr);
+@@ -549,10 +542,12 @@
+             sumi_d = ggml_cuda_dp4a((v[j] >> (4*i)) & 0x0F0F0F0F, u[i*QI8_1 + j], sumi_d); // SIMD dot product
+         }
+ 
+-        const float2 ds8f = __half22float2(ds8[i]);
++        const half2 ds8v = ds8[i];
++        const float d8 = q8_1_d_from_ds(ds8v);
++        const float s8 = q8_1_sum_from_ds(ds8v);
+ 
+-        sumf_d += ds8f.x * (sc[i] * sumi_d);
+-        sumf_m += ds8f.y *   m[i]; // sum of q8_1 block * q4_K min val
++        sumf_d += d8 * (sc[i] * sumi_d);
++        sumf_m += s8 *   m[i]; // sum of q8_1 block * q4_K min val
+     }
+ 
+     const float2 dm4f = __half22float2(dm4);
+@@ -612,10 +607,12 @@
+             sumi_d = ggml_cuda_dp4a(v[i*QI8_1 + j], u[i*QI8_1 + j], sumi_d); // SIMD dot product
+         }
+ 
+-        const float2 ds8f = __half22float2(ds8[i]);
++        const half2 ds8v = ds8[i];
++        const float d8 = q8_1_d_from_ds(ds8v);
++        const float s8 = q8_1_sum_from_ds(ds8v);
+ 
+-        sumf_d += ds8f.x * (sc[i] * sumi_d);
+-        sumf_m += ds8f.y *   m[i]; // sum of q8_1 block * q4_K min val
++        sumf_d += d8 * (sc[i] * sumi_d);
++        sumf_m += s8 *   m[i]; // sum of q8_1 block * q4_K min val
+     }
+ 
+     const float2 dm4f = __half22float2(dm4);
+@@ -884,7 +881,11 @@
+         u[2*i+1] = get_int_b4(bq8_1->qs, iqs + i + QI4_0);
+     }
+ 
+-    return vec_dot_q4_0_q8_1_impl<VDR_Q4_0_Q8_1_MMVQ>(v, u, bq4_0->d, bq8_1->ds);
++    const half2 ds8 = bq8_1->ds;
++    const float d8 = q8_1_d_from_ds(ds8);
++    const float s8 = q8_1_sum_from_ds(ds8);
++
++    return vec_dot_q4_0_q8_1_impl<VDR_Q4_0_Q8_1_MMVQ>(v, u, bq4_0->d, d8, s8);
+ }
+ 
+ 
+@@ -903,7 +904,11 @@
+         u[2*i+1] = get_int_b4(bq8_1->qs, iqs + i + QI4_1);
+     }
+ 
+-    return vec_dot_q4_1_q8_1_impl<VDR_Q4_1_Q8_1_MMVQ>(v, u, bq4_1->dm, bq8_1->ds);
++    const half2 ds8 = bq8_1->ds;
++    const float d8 = q8_1_d_from_ds(ds8);
++    const float s8 = q8_1_sum_from_ds(ds8);
++
++    return vec_dot_q4_1_q8_1_impl<VDR_Q4_1_Q8_1_MMVQ>(v, u, bq4_1->dm, d8, s8);
+ }
+ 
+ static __device__ __forceinline__ float vec_dot_q5_0_q8_1(
+@@ -923,7 +928,11 @@
+         u[2*i+1] = get_int_b4(bq8_1->qs, iqs + i + QI5_0);
+     }
+ 
+-    return vec_dot_q5_0_q8_1_impl<VDR_Q5_0_Q8_1_MMVQ>(vl, vh, u, bq5_0->d, bq8_1->ds);
++    const half2 ds8 = bq8_1->ds;
++    const float d8 = q8_1_d_from_ds(ds8);
++    const float s8 = q8_1_sum_from_ds(ds8);
++
++    return vec_dot_q5_0_q8_1_impl<VDR_Q5_0_Q8_1_MMVQ>(vl, vh, u, bq5_0->d, d8, s8);
+ }
+ 
+ static __device__ __forceinline__ float vec_dot_q5_1_q8_1(
+@@ -943,7 +952,11 @@
+         u[2*i+1] = get_int_b4(bq8_1->qs, iqs + i + QI5_1);
+     }
+ 
+-    return vec_dot_q5_1_q8_1_impl<VDR_Q5_1_Q8_1_MMVQ>(vl, vh, u, bq5_1->dm, bq8_1->ds);
++    const half2 ds8 = bq8_1->ds;
++    const float d8 = q8_1_d_from_ds(ds8);
++    const float s8 = q8_1_sum_from_ds(ds8);
++
++    return vec_dot_q5_1_q8_1_impl<VDR_Q5_1_Q8_1_MMVQ>(vl, vh, u, bq5_1->dm, d8, s8);
+ }
+ 
+ static __device__ __forceinline__ float vec_dot_q8_0_q8_1(
+@@ -1365,8 +1378,8 @@
+ 
+     const float  d1q   = __half2float(bq1->d) * (((qh >> 11) & 0x0E) + 1);
+     const float  delta = -1.0f + IQ1S_DELTA - (qh & 0x8000) * (2.0f*IQ1S_DELTA/0x8000);
+-    const float2 ds    = __half22float2(bq8_1[iqs].ds);
+-    return d1q * (ds.x*sumi + ds.y*delta);
++    const half2  ds    = bq8_1[iqs].ds;
++    return d1q * (q8_1_d_from_ds(ds)*sumi + q8_1_sum_from_ds(ds)*delta);
+ }
+ 
+ #define VDR_IQ1_M_Q8_1_MMVQ 1
+diff -ru --strip-trailing-cr a/csrc/gguf_llamacpp_kernels.cu b/csrc/gguf_llamacpp_kernels.cu
+--- a/csrc/gguf_llamacpp_kernels.cu	2026-10-11 02:35:01.195413600 +0300
++++ b/csrc/gguf_llamacpp_kernels.cu	2026-10-11 02:35:00.122913800 +0300
+@@ -663,6 +663,15 @@
+     q.z = amax > 0.0f ? roundf(xi.z * d_inv) : 0;
+     q.w = amax > 0.0f ? roundf(xi.w * d_inv) : 0;
+ 
++    int sum_q = 0;
++    if (ds_layout == MMQ_Q8_1_DS_LAYOUT_DS4) {
++        sum_q = q.x + q.y + q.z + q.w;
++#pragma unroll
++        for (int offset = vals_per_sum / 8; offset > 0; offset >>= 1) {
++            sum_q += __shfl_xor_sync(WGP_WARP_MASK, sum_q, offset, WARP_SIZE);
++        }
++    }
++
+     char4 * yqs4 = (char4 *) y[ib].qs;
+     yqs4[iqs / 4] = q;
+ 
+@@ -685,7 +694,7 @@
+ 
+     const float d = amax > 0.0f ? 1.0f / d_inv : 0.0f;
+     if (ds_layout == MMQ_Q8_1_DS_LAYOUT_DS4) {
+-        y[ib].ds4[iqs / 32] = make_half2(d, sum);
++        y[ib].ds4[iqs / 32] = make_q8_1_ds(d, sum_q);
+     } else {
+         y[ib].d4[iqs / 32] = d;
+     }
+@@ -746,11 +755,12 @@
+         }
+     }
+     const float amax = warp_reduce_max<QK8_1>(fabsf(xi));
+-    const float sum = warp_reduce_sum<QK8_1>(xi);
+     const float d = amax / 127.0f;
+-    y[ib].qs[iqs] = amax == 0.0f ? 0 : roundf(xi / d);
++    const int q = amax == 0.0f ? 0 : roundf(xi / d);
++    const int sum_q = warp_reduce_sum<QK8_1>(q);
++    y[ib].qs[iqs] = (int8_t) q;
+     if (iqs == 0) {
+-        y[ib].ds = make_half2(d, sum);
++        y[ib].ds = make_q8_1_ds(d, sum_q);
+     }
+ }
+ 
+diff -ru --strip-trailing-cr a/csrc/prism_decode.cu b/csrc/prism_decode.cu
+--- a/csrc/prism_decode.cu	2026-10-11 02:35:00.281446400 +0300
++++ b/csrc/prism_decode.cu	2026-10-11 02:35:00.323592700 +0300
+@@ -63,11 +63,12 @@
+         // Preserve the original Hadamard output rounding before Q8 quantization.
+         const float xi = float(T(result));
+         const float amax = warp_reduce_max<32>(fabsf(xi));
+-        const float sum = warp_reduce_sum<32>(xi);
+         const float scale = amax / 127.0f;
+         const int64_t index = chunk + t + 256*j;
+-        out[index / 32].qs[index % 32] = amax == 0.0f ? 0 : roundf(xi / scale);
+-        if (index % 32 == 0) out[index / 32].ds = make_half2(scale, sum);
++        const int q = amax == 0.0f ? 0 : roundf(xi / scale);
++        const int sum_q = warp_reduce_sum<32>(q);
++        out[index / 32].qs[index % 32] = (int8_t) q;
++        if (index % 32 == 0) out[index / 32].ds = make_q8_1_ds(scale, sum_q);
+     }
+ }
+ 

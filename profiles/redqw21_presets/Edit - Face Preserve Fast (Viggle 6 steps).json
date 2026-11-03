@@ -1,0 +1,16 @@
+{
+    "activated_loras": [
+        "https://huggingface.co/Viggle/Qwen-Image-2.1-viggle-turbo/resolve/main/Qwen-Image-2.1-viggle-turbo-v0.3-6step-lora-r256.safetensors"
+    ],
+    "loras_multipliers": "1",
+    "num_inference_steps": 6,
+    "guidance_scale": 1,
+    "sample_solver": "viggle_v02",
+    "negative_prompt": "",
+    "video_prompt_type": "KI",
+    "custom_settings": {
+        "qwen21_kv_cache": "Disabled",
+        "rgba": "Disabled"
+    },
+    "help": "Fast edit (~55 s): face kept exactly, but complex scene changes may be applied only partially. Use the Quality preset for big changes. Prompt template: 'Edit image 1: <what changes>. Keep her/his face, facial features, eye color, skin details and hair exactly the same as in image 1.'"
+}

@@ -1,0 +1,13 @@
+{
+    "activated_loras": [],
+    "loras_multipliers": "",
+    "num_inference_steps": 40,
+    "guidance_scale": 4.0,
+    "sample_solver": "default",
+    "video_prompt_type": "KI",
+    "custom_settings": {
+        "qwen21_kv_cache": "Disabled",
+        "rgba": "Disabled"
+    },
+    "help": "Best edit quality: full scene/outfit changes with exact face preservation (~145 s at 1024x1024). Load the source photo in Reference Images. Prompt template: 'Edit image 1: <what changes>. Keep her/his face, facial features, eye color, skin details and hair exactly the same as in image 1.'"
+}

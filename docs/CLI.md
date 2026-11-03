@@ -186,12 +186,12 @@ Each materialized session keeps its canonical decoder context in `context.json` 
 
 ### Model Configuration
 ```bash
---quantize-transformer BOOL   # Enable/disable transformer quantization (default: True)
 --compile                     # Enable PyTorch compilation (requires Triton)
---attention MODE              # Force attention mode: sdpa, flash, sage, sage2
---profile NUMBER              # Performance profile 0-5 (default: 4)
+--attention MODE              # Force attention mode: sdpa, flash, sage, sage2, sage3
+--profile NUMBER              # Force the same performance profile (0-5) for video, image and audio (default: each kind's Configuration profile)
 --preload NUMBER              # Preload N MB of diffusion model in VRAM (Manual VRAM Preload for every kind of output)
 --fp16                        # Force fp16 instead of bf16 models
+--bf16                        # Force a bf16 transformer model (the default)
 --save-quantized              # Save an INT8 Quanto checkpoint during model loading
 --convrot                     # With --save-quantized, save INT8 ConvRot instead of Quanto INT8
 --gpu DEVICE                  # Run on specific GPU device (e.g., "cuda:1")
@@ -230,6 +230,7 @@ For Flux dev at 1024x1024, a manual 6000 MB shortened the profile 4 steps by abo
 ### Memory Management
 ```bash
 --perc-reserved-mem-max FLOAT # Share of RAM that pinning may lock, as a fraction (0.4 = 40%)
+--vram-safety-coefficient FLOAT # Max share of VRAM (0-1) that preloaded models may occupy (default: 0.8)
 ```
 Pinned ("reserved") RAM makes the transfers to the GPU fast, but nothing else can use it. *Configuration / RAM/VRAM Management / Reserved RAM for Pinning* sets the share of RAM that WanGP may pin, in percent (0 = automatic: 40% on Windows, 60% on Linux). `--perc-reserved-mem-max` takes precedence over this setting, which takes precedence over the `perc_reserved_mem_max` environment variable.
 
@@ -307,11 +308,6 @@ JSON entries take precedence over `--loras`. Unlisted keys use the root from `--
 --advanced                   # Launch with advanced mode enabled
 ```
 
-### Advanced Generation
-```bash
---teacache MULTIPLIER        # TeaCache speed multiplier: 0, 1.5, 1.75, 2.0, 2.25, 2.5
-```
-
 ## Interface and Server Options
 
 ### Server Configuration
@@ -326,6 +322,7 @@ JSON entries take precedence over `--loras`. Unlisted keys use the root from `--
 ### Interface Options
 ```bash
 --lock-config                # Prevent modifying video engine configuration from interface
+--lock-model                 # Prevent switching models
 --theme THEME_NAME           # UI theme: "default" or "gradio"
 ```
 
@@ -341,12 +338,19 @@ JSON entries take precedence over `--loras`. Unlisted keys use the root from `--
 
 With `--offline`, WanGP and the libraries it uses never download anything: models, text encoders, LoRAs from links and processing tools must already be in your checkpoints folders. A missing file stops the job with an error naming it, instead of starting a download. Useful on a computer without internet access, on a metered connection, or to make sure a test or a batch runs only with the files you already have.
 
+### Plugin Catalog Maintenance
+```bash
+--refresh-catalog            # Refresh local plugin metadata for installed external plugins, then exit
+--refresh-full-catalog       # Refresh local plugin metadata for all catalog plugins, then exit
+--merge-catalog              # Merge plugins_local.json into plugins.json and remove plugins_local.json, then exit
+```
+
 ## Examples
 
 ### Basic Usage Examples
 ```bash
 # Launch with specific model and loras
-python wgp.py ----lora-preset mystyle.lset
+python wgp.py --lora-preset mystyle.lset
 
 # High-performance setup with compilation
 python wgp.py --compile --attention sage2 --profile 3
@@ -373,19 +377,10 @@ python wgp.py --lock-config --share
 python wgp.py --compile --attention sage2 --profile 3 --preload 2000
 
 # Optimized for RTX 2080Ti
-python wgp.py --profile 4 --attention sdpa --teacache 2.0
+python wgp.py --profile 4 --attention sdpa
 
 # Memory-efficient setup
 python wgp.py --fp16 --profile 4 --perc-reserved-mem-max 0.3
-```
-
-### TeaCache Configuration
-```bash
-# Different speed multipliers
-python wgp.py --teacache 1.5   # 1.5x speed, minimal quality loss
-python wgp.py --teacache 2.0   # 2x speed, some quality loss
-python wgp.py --teacache 2.5   # 2.5x speed, noticeable quality loss
-python wgp.py --teacache 0     # Disable TeaCache
 ```
 
 ## Attention Modes
@@ -436,6 +431,15 @@ python wgp.py --attention sdpa --profile 4 --fp16
 ```bash
 # Maximum verbosity for troubleshooting
 python wgp.py --verbose 2 --check-loras
+```
+
+Developer and diagnostic flags:
+```bash
+--debug-gen-form             # Show form generation and refresh times in the console
+--test                       # Load the model, then exit before generating
+--betatest                   # Expose unreleased features, such as experimental attention backends
+--save-masks                 # Save preprocessed masks for debugging or editing
+--save-speakers              # Save the preprocessed audio track with the extracted speakers
 ```
 
 ### Memory Issue Debugging

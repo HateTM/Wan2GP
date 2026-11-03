@@ -1,0 +1,92 @@
+{
+  "ram-mmgp": {
+    "timing": {
+      "832x480, 8st": {
+        "median": 32.8,
+        "runs": [
+          32.8,
+          32.8,
+          32.7
+        ]
+      },
+      "1280x704, 8st": {
+        "median": 67.9,
+        "runs": [
+          67.9,
+          67.9,
+          69.2
+        ]
+      }
+    },
+    "ram_log": "[RAM] MMGP RAM Allocator: the RAM of freed CPU tensors goes back to the system",
+    "nsys": {
+      "span_s": 116.2,
+      "busy_pct": 14.3,
+      "idle_pct": 85.7,
+      "kernel_s": 10.28,
+      "h2d_gb": 186.8,
+      "h2d_s": 10.05,
+      "kernels": 262593
+    }
+  },
+  "ram-default": {
+    "timing": {
+      "832x480, 8st": {
+        "median": 33.1,
+        "runs": [
+          33.1,
+          32.5,
+          33.1
+        ]
+      },
+      "1280x704, 8st": {
+        "median": 69.0,
+        "runs": [
+          69.0,
+          73.0,
+          68.7
+        ]
+      }
+    },
+    "ram_log": "",
+    "nsys": {
+      "span_s": 115.1,
+      "busy_pct": 15.4,
+      "idle_pct": 84.6,
+      "kernel_s": 10.9,
+      "h2d_gb": 186.8,
+      "h2d_s": 10.51,
+      "kernels": 262593
+    }
+  },
+  "perc03": {
+    "timing": {
+      "832x480, 8st": {
+        "median": 32.6,
+        "runs": [
+          32.5,
+          35.1,
+          32.6
+        ]
+      },
+      "1280x704, 8st": {
+        "median": 68.1,
+        "runs": [
+          68.1,
+          69.5,
+          67.8
+        ]
+      }
+    },
+    "ram_log": "[RAM] MMGP RAM Allocator: the RAM of freed CPU tensors goes back to the system",
+    "nsys": {
+      "span_s": 106.5,
+      "busy_pct": 16.3,
+      "idle_pct": 83.7,
+      "kernel_s": 10.39,
+      "h2d_gb": 186.8,
+      "h2d_s": 10.82,
+      "kernels": 262593
+    }
+  }
+}

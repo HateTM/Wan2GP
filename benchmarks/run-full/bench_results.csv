@@ -1,0 +1,16 @@
+suite,name,resolution,frames,overrides,duration_s,status,warmup,baseline
+ltx25,warmup (excluded),1280x704,121,{},543.0,unknown,True,False
+ltx25,"baseline: 1280x704, 8st, guidance5x2ph (current default)",1280x704,121,{},75.6,unknown,False,True
+ltx25,"fast recipe: 1280x704, 8st, guidance1 1ph",1280x704,121,"{""guidance_scale"": 1, ""guidance2_scale"": 1, ""guidance_phases"": 1}",83.8,unknown,False,False
+ltx25,"lowres: 832x480, 8st, guidance1",832x480,121,"{""guidance_scale"": 1, ""guidance2_scale"": 1, ""guidance_phases"": 1}",39.9,unknown,False,False
+ltx25,lowres + LTX2.5 Pixel Upscaler x2,832x480,121,"{""guidance_scale"": 1, ""guidance2_scale"": 1, ""guidance_phases"": 1, ""spatial_upsampling"": ""ltx25*2""}",82.2,unknown,False,False
+h3,warmup (excluded),832x480,124,{},174.8,unknown,True,False
+h3,"baseline: 832x480, 8st res_multistep",832x480,124,{},95.7,unknown,False,True
+h3,6 steps,832x480,124,"{""num_inference_steps"": 6}",80.2,unknown,False,False
+h3,832x480 + MiniMax H3 VAE x2,832x480,124,"{""spatial_upsampling"": ""h3_vae*2""}",219.5,unknown,False,False
+h3,248 frames,832x480,248,{},263.2,unknown,False,False
+h3,124 frames + RIFE x2,832x480,124,"{""temporal_upsampling"": ""rife*2""}",112.3,unknown,False,False
+wan13b,warmup (excluded),832x480,81,{},97.0,unknown,True,False
+wan13b,"baseline: 832x480, 4st",832x480,81,{},34.9,unknown,False,True
+wan13b,"1280x720, 4st",1280x720,81,{},94.7,unknown,False,False
+wan13b,162 frames + RIFE x2,832x480,162,"{""temporal_upsampling"": ""rife*2""}",90.4,unknown,False,False

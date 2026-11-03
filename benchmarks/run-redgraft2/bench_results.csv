@@ -1,0 +1,7 @@
+suite,name,resolution,frames,overrides,duration_s,status,warmup,baseline
+redgraft,warmup (excluded),1280x704,121,{},141.6,ok,True,False
+redgraft,"baseline: 1280x704, 8st (your default)",1280x704,121,{},64.2,ok,False,True
+redgraft,"lowres: 832x480, 8st",832x480,121,{},32.2,ok,False,False
+redgraft,lowres + LTX2.3 Pixel Upscaler x2 (ComfyUI workflow method),832x480,121,"{""spatial_upsampling"": ""ltx23*2""}",1059.5,error,False,False
+redgraft,lowres + LTX2.5 Pixel Upscaler x2,832x480,121,"{""spatial_upsampling"": ""ltx25*2""}",505.1,ok,False,False
+redgraft,lowres + LTX2.5 Detail Refiner x1.5,832x480,121,"{""spatial_upsampling"": ""ltx25_refine*1.5""}",319.6,ok,False,False
