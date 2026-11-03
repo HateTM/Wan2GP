@@ -17,13 +17,10 @@ from .florence2.image_processing_florence2 import Florence2ImageProcessorLite
 from transformers import AutoTokenizer, BartTokenizer, BartTokenizerFast
 
 from .assets import (
-    FLORENCE2_FILES,
+    florence_llama_download_def,
     FLORENCE2_FOLDER,
-    LLAMA32_FILES,
     LLAMA32_FOLDER,
-    LLAMAJOY_FILES,
     LLAMAJOY_FOLDER,
-    PROMPT_ENHANCER_REPO,
 )
 from shared.deepy.config import resolve_deepy_kv_cache_quantization
 from .config import resolve_prompt_enhancer_speculative_decoding, speculative_decoding_runtime
@@ -42,25 +39,8 @@ class PromptEnhancerRuntime:
 
 def ensure_prompt_enhancer_assets(process_files_def, enhancer_enabled: int, qwen_backend: str = "quanto_int8", speculative_decoding: bool = False):
     enhancer_enabled = int(enhancer_enabled)
-    if enhancer_enabled == 1:
-        process_files_def(
-            repoId=PROMPT_ENHANCER_REPO,
-            sourceFolderList=[FLORENCE2_FOLDER, LLAMA32_FOLDER],
-            fileList=[
-                FLORENCE2_FILES,
-                LLAMA32_FILES,
-            ],
-        )
-        return
-    if enhancer_enabled == 2:
-        process_files_def(
-            repoId=PROMPT_ENHANCER_REPO,
-            sourceFolderList=[FLORENCE2_FOLDER, LLAMAJOY_FOLDER],
-            fileList=[
-                FLORENCE2_FILES,
-                LLAMAJOY_FILES,
-            ],
-        )
+    if enhancer_enabled in (1, 2):
+        process_files_def(**florence_llama_download_def(enhancer_enabled))
         return
     if enhancer_enabled in (3, 4, 5, 6):
         from .qwen35_vl import ensure_qwen35_prompt_enhancer_assets, get_qwen35_prompt_enhancer_variant
@@ -228,28 +208,28 @@ def load_prompt_enhancer_runtime(process_files_def, enhancer_enabled: int, qwen_
         )
         runtime.image_caption_processor = getattr(runtime.image_caption_model, "_prompt_enhancer_processor", None)
         runtime.image_caption_model.eval()
-        runtime.pipe_models["prompt_enhancer_image_caption_vision_tower_model"] = vision_tower_model
-        runtime.pipe_models["prompt_enhancer_image_caption_embedding_model"] = caption_embedding_model
+        runtime.pipe_models["vision_tower_model"] = vision_tower_model
+        runtime.pipe_models["embedding_model"] = caption_embedding_model
         runtime.llm_model._mm_pinned_pool = True  # the prompt enhancer's and Deepy Prime's language model decodes token by token: its blocks enter MMGP's pinned pool
-        runtime.pipe_models["prompt_enhancer_llm_model"] = runtime.llm_model
-        runtime.budgets["prompt_enhancer_image_caption_vision_tower_model"] = spec.get("vision_budget", 3000)
-        runtime.budgets["prompt_enhancer_image_caption_embedding_model"] = spec.get("embedding_budget", 2000)
-        runtime.budgets["prompt_enhancer_llm_model"] = spec.get("llm_budget", 10000)
-        runtime.co_tenants["prompt_enhancer_image_caption_vision_tower_model"] = ["prompt_enhancer_image_caption_embedding_model"]
-        runtime.co_tenants["prompt_enhancer_image_caption_embedding_model"] = ["prompt_enhancer_image_caption_vision_tower_model"]
+        runtime.pipe_models["llm_model"] = runtime.llm_model
+        runtime.budgets["vision_tower_model"] = spec.get("vision_budget", 3000)
+        runtime.budgets["embedding_model"] = spec.get("embedding_budget", 2000)
+        runtime.budgets["llm_model"] = spec.get("llm_budget", 10000)
+        runtime.co_tenants["vision_tower_model"] = ["embedding_model"]
+        runtime.co_tenants["embedding_model"] = ["vision_tower_model"]
         return runtime
 
     runtime.image_caption_model, runtime.image_caption_processor = load_florence2(fl.locate_folder(FLORENCE2_FOLDER), attn_implementation="sdpa")
     runtime.image_caption_model._model_dtype = torch.float
     runtime.image_caption_model.eval()
-    runtime.pipe_models["prompt_enhancer_image_caption_model"] = runtime.image_caption_model
+    runtime.pipe_models["image_caption_model"] = runtime.image_caption_model
     if enhancer_enabled == 1:
         runtime.llm_model, runtime.llm_tokenizer, budget = _load_llama32_prompt_enhancer()
     else:
         runtime.llm_model, runtime.llm_tokenizer, budget = _load_joycaption_prompt_enhancer()
     runtime.llm_model._mm_pinned_pool = True  # decodes token by token: its blocks enter MMGP's pinned pool
-    runtime.pipe_models["prompt_enhancer_llm_model"] = runtime.llm_model
-    runtime.budgets["prompt_enhancer_llm_model"] = budget
+    runtime.pipe_models["llm_model"] = runtime.llm_model
+    runtime.budgets["llm_model"] = budget
     return runtime
 
 
