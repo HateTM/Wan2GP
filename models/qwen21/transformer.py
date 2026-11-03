@@ -424,6 +424,16 @@ class QwenImage21Transformer2DModel(ModelMixin, ConfigMixin):
     _repeated_blocks = ['QwenImage21TransformerBlock']
     _skip_keys = ['kv_cache']
 
+    @classmethod
+    def build_gate_up_split_map(cls):
+        # Loader-side twin of split_linear_modules_map (same data, but usable
+        # before instantiation): checkpoints that pack SwiGLU output rows as
+        # fused "img_mlp.gate_up" ([gate_layer; proj]) are split back during
+        # load. Sizes match the 7B arch (num_attention_heads 32 * head_dim 128
+        # * mlp_ratio 3); the __init__ defaults document the same values.
+        mlp_hidden = 12288
+        return {"gate_up": {"mapped_modules": ("gate_layer", "proj"), "split_sizes": (mlp_hidden,) * 2}}
+
     @register_to_config
     def __init__(self, patch_size: int=1, in_channels: int=64, out_channels: int | None=64, num_layers: int=32, attention_head_dim: int=128, num_attention_heads: int=32, context_in_dim: int=4096, mlp_ratio: int=3, axes_dims_rope: tuple[int, int, int]=(16, 56, 56), eps: float=1e-06, causal_condition: bool=True):
         super().__init__()
@@ -431,9 +441,7 @@ class QwenImage21Transformer2DModel(ModelMixin, ConfigMixin):
         self.inner_dim = num_attention_heads * attention_head_dim
         # AI Toolkit / ComfyUI pack SwiGLU output rows as [gate_layer; proj].
         # MMGP splits LoRA B and shares A, preserving the original rank/scaling.
-        self.split_linear_modules_map = {
-            "gate_up": {"mapped_modules": ("gate_layer", "proj"), "split_sizes": (self.inner_dim * mlp_ratio,) * 2},
-        }
+        self.split_linear_modules_map = self.build_gate_up_split_map()
         self.pos_embed = QwenImage21Rope(theta=10000, axes_dim=list(axes_dims_rope))
         self.time_text_embed = QwenImage21TimestepProjEmbeddings(embedding_dim=self.inner_dim)
         self.txt_in = QwenImage21TextProjection(context_in_dim, self.inner_dim, eps=eps)

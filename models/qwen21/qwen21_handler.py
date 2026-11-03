@@ -181,7 +181,12 @@ class family_handler:
         from .vae import AutoencoderKLQwenImage21
 
         config = os.path.join(os.path.dirname(__file__), "configs", "qwen_image_21_7B.json")
-        transformer = offload.fast_load_transformers_model(model_filename[0], writable_tensors=False, modelClass=QwenImage21Transformer2DModel, defaultConfigPath=config, do_quantize=quantizeTransformer and not save_quantized)
+        # AI Toolkit / ComfyUI-fine-tuned checkpoints may pack the SwiGLU up
+        # projections as fused "img_mlp.gate_up" rows ([gate_layer; proj]); the
+        # split_linear_modules_map of the transformer splits them back during
+        # load. Split-layout checkpoints (e.g. RedCraft) are unaffected: the
+        # map simply matches nothing.
+        transformer = offload.fast_load_transformers_model(model_filename[0], writable_tensors=False, modelClass=QwenImage21Transformer2DModel, defaultConfigPath=config, do_quantize=quantizeTransformer and not save_quantized, fused_split_map=QwenImage21Transformer2DModel.build_gate_up_split_map())
         if save_quantized:
             from wgp import save_quantized_model
             save_quantized_model(transformer, model_type, model_filename[0], torch.bfloat16, config)
@@ -201,7 +206,26 @@ class family_handler:
             encoder_files.append(fl.locate_file(os.path.join(ENCODER, VISION_FILE)))
         offload.load_model_data(text_encoder, encoder_files, writable_tensors=False, preprocess_sd=encoder_state_dict)
         runtime.lookup_on_cpu(text_encoder.model.language_model.embed_tokens)  # the 1.2 GB token table stays in RAM: mmgp looks up the prompt's rows on the CPU
-        vae = offload.fast_load_transformers_model(fl.locate_file(PROJECT + "/qwen_image_21_vae.safetensors"), writable_tensors=False, modelClass=AutoencoderKLQwenImage21, defaultConfigPath=fl.locate_file(PROJECT + "/vae_config.json"), default_dtype=torch.float32)
+        # Variant VAE: a model_def may redirect the autoencoder to an
+        # alternative checkpoint ("VAE_URLs" is the canonical property
+        # preloaded by download_models; "vae_URL"/"vae_URLs" are legacy
+        # aliases), e.g. the vendor texture-fix VAE of the RedCraft / Noct Q
+        # fine-tunes. Native-layout checkpoints are renamed on the fly into
+        # the AutoencoderKLQwenImage21 class layout (see vae_native); the
+        # official file is untouched.
+        vae_override = model_def.get("VAE_URLs", None) or model_def.get("vae_URL", None) or model_def.get("vae_URLs", None)
+        if isinstance(vae_override, dict):
+            vae_override = (vae_override.get("URLs", None) or [None])[0]
+        if isinstance(vae_override, list):
+            vae_override = vae_override[0] if vae_override else None
+        preprocess_sd = None
+        vae_filename = fl.locate_file(PROJECT + "/qwen_image_21_vae.safetensors")
+        if vae_override is not None:
+            from .vae_native import convert_native_qwen21_vae_state_dict, is_native_layout
+            vae_filename = fl.locate_file(vae_override)
+            if is_native_layout(vae_filename):
+                preprocess_sd = convert_native_qwen21_vae_state_dict
+        vae = offload.fast_load_transformers_model(vae_filename, writable_tensors=False, modelClass=AutoencoderKLQwenImage21, defaultConfigPath=fl.locate_file(PROJECT + "/vae_config.json"), default_dtype=torch.float32, preprocess_sd=preprocess_sd)
         text_encoder.eval().requires_grad_(False)
         pipe = {"transformer": transformer, "text_encoder": text_encoder.model.language_model,
                 "vision_encoder": text_encoder.model.visual, "vae": vae}
