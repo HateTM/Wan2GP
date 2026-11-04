@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+<title id="title">WanGP Studio — Workflow-first UI concept</title>
+<desc id="desc">Dark desktop interface concept with navigation sidebar, node library, workflow canvas, inspector and execution queue.</desc>
+<defs>
+ <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#354254" opacity=".7"/></pattern>
+ <style>
+ .t{font-family:Inter,Segoe UI,Arial,sans-serif;fill:#e6ecf4}.m{font-family:Inter,Segoe UI,Arial,sans-serif;fill:#8b98a9}
+ .cap{font-size:10px;letter-spacing:1.5px;font-weight:700;fill:#8b98a9}.txt{font-size:13px}.sm{font-size:11px}
+ .panel{fill:#151c26;stroke:#293545}.inner{fill:#111923;stroke:#2b394a}.node{fill:#1a2635;stroke:#536b8e;stroke-width:1.2}
+ .accent{fill:#86a7f2}.wire{fill:none;stroke:#829bc4;stroke-width:2}.line{stroke:#293545}
+ </style>
+</defs>
+<rect width="1600" height="1000" fill="#0d1117"/>
+<rect x="0" y="0" width="224" height="1000" fill="#10161f"/><path d="M224 0V1000" stroke="#293545"/>
+<rect x="22" y="22" width="34" height="34" rx="9" fill="#86a7f2"/><path d="M31 43V33h5l4 5 4-5h4v10" fill="none" stroke="#10161f" stroke-width="2"/>
+<text class="t" x="68" y="37" font-size="15" font-weight="700">WanGP Studio</text><text class="m" x="68" y="53" font-size="9">CREATIVE WORKSPACE</text>
+<text class="cap" x="22" y="105">WORKSPACE</text>
+<rect x="12" y="119" width="200" height="36" rx="6" fill="#1a2635"/><rect x="12" y="119" width="3" height="36" rx="1" fill="#86a7f2"/>
+<g class="t txt"><text x="28" y="142" font-weight="600">Dashboard</text><text x="28" y="184">Generate</text><text x="28" y="226">Workflow</text></g><circle cx="19" cy="220" r="3" fill="#86a7f2"/>
+<text class="cap" x="22" y="273">LIBRARY</text><g class="m txt"><text x="28" y="310">Media Center</text><text x="28" y="352">Image Editor</text></g>
+<text class="cap" x="22" y="405">MANAGE</text><g class="m txt"><text x="28" y="442">Models</text><text x="28" y="484">Queue</text></g>
+<text class="cap" x="22" y="537">SYSTEM</text><g class="m txt"><text x="28" y="574">Resource Center</text><text x="28" y="616">Settings</text></g>
+<rect x="16" y="914" width="192" height="58" rx="8" fill="#151c26" stroke="#293545"/><circle cx="31" cy="936" r="4" fill="#65c99e"/><text class="t sm" x="44" y="940">Runtime connected</text><text class="m" x="28" y="958" font-size="9">WanGP · GPU ready</text>
+<rect x="224" y="0" width="1376" height="64" fill="#10161f"/><path d="M224 64H1600" class="line"/>
+<text class="m sm" x="252" y="38">Workspace</text><text class="m sm" x="316" y="38">/</text><text class="t sm" x="332" y="38">Workflow</text>
+<circle cx="1370" cy="32" r="4" fill="#65c99e"/><text class="m sm" x="1382" y="36">Connected</text>
+<rect x="1490" y="15" width="84" height="34" rx="6" fill="#1a2635" stroke="#35465d"/><text class="t sm" x="1511" y="36">Settings</text>
+<rect x="224" y="64" width="1376" height="66" fill="#0f151e"/>
+<text class="t" x="252" y="94" font-size="17" font-weight="650">Untitled workflow</text><text class="m sm" x="252" y="113">Last saved just now</text>
+<rect x="1306" y="80" width="74" height="34" rx="6" fill="#151c26" stroke="#35465d"/><text class="t sm" x="1327" y="101">Validate</text>
+<rect x="1390" y="80" width="74" height="34" rx="6" fill="#151c26" stroke="#35465d"/><text class="t sm" x="1414" y="101">Save</text>
+<rect x="1474" y="80" width="100" height="34" rx="6" fill="#86a7f2"/><path d="M1492 91v12l10-6z" fill="#10161f"/><text x="1510" y="101" font-family="Inter,Arial" font-size="12" font-weight="700" fill="#10161f">Run</text>
+<rect x="224" y="130" width="250" height="740" class="panel"/><rect x="474" y="130" width="796" height="740" fill="#0e141c" stroke="#293545"/><rect x="474" y="130" width="796" height="740" fill="url(#grid)"/><rect x="1270" y="130" width="330" height="740" class="panel"/>
+<text class="cap" x="246" y="161">NODE LIBRARY</text><rect x="244" y="176" width="210" height="34" rx="6" class="inner"/><circle cx="260" cy="192" r="5" fill="none" stroke="#8b98a9"/><path d="M264 196l5 5" stroke="#8b98a9"/><text class="m sm" x="278" y="196">Search nodes...</text>
+<g class="cap"><text x="246" y="244">INPUTS</text><text x="246" y="333">MODELS</text><text x="246" y="422">GENERATION</text><text x="246" y="511">PROCESSING</text><text x="246" y="600">OUTPUTS</text></g>
+<g class="t sm">
+ <rect x="244" y="256" width="210" height="48" rx="6" class="inner"/><circle cx="262" cy="280" r="5" fill="#65c99e"/><text x="278" y="276">Image Input</text><text class="m" x="278" y="292" font-size="9">Load source media</text>
+ <rect x="244" y="345" width="210" height="48" rx="6" class="inner"/><circle cx="262" cy="369" r="5" fill="#86a7f2"/><text x="278" y="365">Wan I2V Model</text><text class="m" x="278" y="381" font-size="9">Model-aware settings</text>
+ <rect x="244" y="434" width="210" height="48" rx="6" class="inner"/><circle cx="262" cy="458" r="5" fill="#d6ad70"/><text x="278" y="454">Video Generation</text><text class="m" x="278" y="470" font-size="9">Generate video</text>
+ <rect x="244" y="523" width="210" height="48" rx="6" class="inner"/><circle cx="262" cy="547" r="5" fill="#c69be8"/><text x="278" y="543">Frame Extract</text><text class="m" x="278" y="559" font-size="9">Select frames</text>
+ <rect x="244" y="612" width="210" height="48" rx="6" class="inner"/><circle cx="262" cy="636" r="5" fill="#65c99e"/><text x="278" y="632">Save Output</text><text class="m" x="278" y="648" font-size="9">Write to media library</text>
+</g>
+<rect x="492" y="146" width="190" height="32" rx="6" fill="#151c26" stroke="#293545"/><text class="m sm" x="508" y="167">＋  Add node</text><text class="m sm" x="607" y="167">⌕  Fit</text><text class="m sm" x="1190" y="167">100%</text>
+<path d="M714 394 C755 394 748 394 786 394" class="wire"/><path d="M974 394 C1016 394 1010 394 1048 394" class="wire"/><path d="M880 475 C880 520 880 520 880 550" class="wire" opacity=".65"/>
+<rect x="570" y="320" width="144" height="154" rx="9" class="node"/><rect x="570" y="320" width="144" height="31" rx="9" fill="#243448"/><text class="t sm" x="584" y="340" font-weight="650">Image Input</text><text class="m" x="584" y="373" font-size="10">Source image</text><rect x="584" y="385" width="116" height="65" rx="5" fill="#202d3b"/><path d="M597 437l21-25 16 17 12-12 22 25" fill="none" stroke="#86a7f2" stroke-width="2"/><circle cx="714" cy="394" r="5" fill="#65c99e"/>
+<rect x="786" y="300" width="188" height="190" rx="9" class="node"/><rect x="786" y="300" width="188" height="31" rx="9" fill="#243448"/><text class="t sm" x="800" y="320" font-weight="650">Wan I2V Generation</text><circle cx="786" cy="394" r="5" fill="#65c99e"/><circle cx="974" cy="394" r="5" fill="#d6ad70"/><text class="m" x="802" y="356" font-size="10">Model</text><text class="t sm" x="802" y="374">Wan 2.2 I2V</text><text class="m" x="802" y="412" font-size="10">Prompt</text><text class="t sm" x="802" y="431">Cinematic slow motion...</text><text class="m" x="802" y="463" font-size="10">720p · 81 frames · 24 fps</text>
+<rect x="1048" y="340" width="142" height="108" rx="9" class="node"/><rect x="1048" y="340" width="142" height="31" rx="9" fill="#243448"/><text class="t sm" x="1062" y="360" font-weight="650">Video Output</text><circle cx="1048" cy="394" r="5" fill="#d6ad70"/><rect x="1062" y="385" width="114" height="48" rx="4" fill="#202d3b"/><path d="M1110 397v24l18-12z" fill="#86a7f2"/>
+<text class="cap" x="1294" y="161">INSPECTOR</text><text class="t" x="1294" y="194" font-size="15" font-weight="650">Wan I2V Generation</text><text class="m sm" x="1294" y="215">Model-aware generation node</text><path d="M1294 234H1576" class="line"/>
+<text class="cap" x="1294" y="260">MODEL</text><rect x="1294" y="273" width="282" height="38" rx="6" class="inner"/><text class="t sm" x="1308" y="297">Wan 2.2 I2V</text><text class="m sm" x="1549" y="297">⌄</text>
+<text class="cap" x="1294" y="346">PROMPT</text><rect x="1294" y="359" width="282" height="80" rx="6" class="inner"/><text class="t sm" x="1308" y="383">A cinematic shot, slow motion,</text><text class="t sm" x="1308" y="402">soft daylight, detailed texture...</text>
+<text class="cap" x="1294" y="476">GENERATION SETTINGS</text><g class="m sm"><text x="1294" y="509">Resolution</text><text x="1294" y="552">Frames</text><text x="1294" y="595">FPS</text><text x="1294" y="638">Seed</text></g>
+<g class="t sm"><rect x="1434" y="489" width="142" height="30" rx="5" class="inner"/><text x="1447" y="509">1280 × 720</text><rect x="1434" y="532" width="142" height="30" rx="5" class="inner"/><text x="1447" y="552">81</text><rect x="1434" y="575" width="142" height="30" rx="5" class="inner"/><text x="1447" y="595">24</text><rect x="1434" y="618" width="142" height="30" rx="5" class="inner"/><text x="1447" y="638">Random</text></g>
+<path d="M1294 675H1576" class="line"/><text class="cap" x="1294" y="703">LORA</text><text class="m sm" x="1294" y="730">No LoRA selected</text>
+<rect x="224" y="870" width="1376" height="130" fill="#10161f" stroke="#293545"/><text class="cap" x="250" y="897">EXECUTION / QUEUE</text><circle cx="254" cy="927" r="4" fill="#65c99e"/><text class="t sm" x="268" y="931">Generating video</text><text class="m sm" x="410" y="931">Wan 2.2 I2V · Step 12 / 30</text>
+<rect x="250" y="947" width="960" height="7" rx="3.5" fill="#263343"/><rect x="250" y="947" width="384" height="7" rx="3.5" fill="#86a7f2"/><text class="m sm" x="1232" y="931">ETA 00:42</text>
+<rect x="1440" y="908" width="116" height="34" rx="6" fill="#2a1d25" stroke="#68414b"/><text x="1476" y="930" font-family="Inter,Arial" font-size="12" fill="#e7a1a6">Cancel</text>
+<text class="m" x="250" y="981" font-size="10">Native WanGP queue · MMGP manages VRAM/offloading</text>
+</svg>
