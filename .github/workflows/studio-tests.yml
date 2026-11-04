@@ -4,10 +4,14 @@ on:
   push:
     paths:
       - "plugins/wan2gp_studio/**"
+      - "plugins/plugin_manager/**"
+      - "shared/utils/plugins.py"
       - ".github/workflows/studio-tests.yml"
   pull_request:
     paths:
       - "plugins/wan2gp_studio/**"
+      - "plugins/plugin_manager/**"
+      - "shared/utils/plugins.py"
       - ".github/workflows/studio-tests.yml"
 
 jobs:
@@ -36,6 +40,8 @@ jobs:
             "mutagen==1.48.1"
       - name: Run Studio tests
         run: python -m pytest plugins/wan2gp_studio/tests -q
+      - name: Run plugin manager tests (version compare, update fork-guard)
+        run: python -m pytest plugins/plugin_manager/tests -q
 
   # Optional integration job: WanFlow UI is not vendored into this repository,
   # so the source repository and ref must be provided as repository variables

@@ -297,18 +297,38 @@ def _parse_date(value: Any) -> Optional[datetime.datetime]:
     except ValueError:
         return None
 
+def _compare_dates(left_value: Any, right_value: Any) -> int:
+    left_date = _parse_date(left_value)
+    right_date = _parse_date(right_value)
+    if left_date and right_date and left_date != right_date:
+        return 1 if left_date > right_date else -1
+    if left_date and not right_date:
+        return 1
+    if right_date and not left_date:
+        return -1
+    return 0
+
 def compare_release_metadata(left: Dict[str, Any], right: Dict[str, Any]) -> int:
-    left_date = _parse_date(left.get("date"))
-    right_date = _parse_date(right.get("date"))
-    if left_date or right_date:
-        if left_date and right_date:
-            if left_date != right_date:
-                return 1 if left_date > right_date else -1
-        elif left_date:
-            return 1
-        else:
-            return -1
-    return compare_versions(left.get("version", ""), right.get("version", ""))
+    """Order two release metadata dicts: > 0 means ``left`` is newer.
+
+    The version number is the primary release signal: a newer version must
+    win even when its date string is older or missing (maintainers forget to
+    bump dates far more often than versions). Dates decide only when the
+    versions are equal - fixes do ship without a version bump - or when at
+    least one side carries no usable version at all.
+    """
+    left_version = str(left.get("version") or "")
+    right_version = str(right.get("version") or "")
+    left_has_version = bool(re.search(r"\d", left_version))
+    right_has_version = bool(re.search(r"\d", right_version))
+    if left_has_version and right_has_version:
+        result = compare_versions(left_version, right_version)
+        if result != 0:
+            return result
+        return _compare_dates(left.get("date"), right.get("date"))
+    # One side has no version (catalog entries may carry a date only): dates
+    # are the only comparable signal left.
+    return _compare_dates(left.get("date"), right.get("date"))
 
 def is_wangp_compatible(required_version: str, current_version: str) -> bool:
     if not _has_value(required_version):
@@ -1538,6 +1558,24 @@ class PluginManager:
             if local_commit == remote_commit:
                  self.record_plugin_metadata(plugin_id)
                  return f"[Info] Plugin '{plugin_id}' is already up to date."
+
+            # Fork guard: a pull can auto-merge without conflicts, silently
+            # folding local work into a merge commit. Plugins that carry
+            # local-only commits must be reconciled deliberately, not
+            # updated blindly.
+            try:
+                bases = repo.merge_base(local_commit, remote_commit)
+            except GitCommandError:
+                bases = []
+            if not bases:
+                return f"[Error] Update refused: '{plugin_id}' shares no commit history with origin. Reconcile this fork manually or fix the remote."
+            ahead = list(repo.iter_commits(f"{bases[0].hexsha}..{local_commit}"))
+            if ahead:
+                titles = "; ".join(commit.summary.splitlines()[0] for commit in ahead[:3])
+                return (
+                    f"[Error] Update refused: '{plugin_id}' has {len(ahead)} local commit(s) not on origin ({titles}). "
+                    "A pull could auto-merge over them - reconcile the fork manually first."
+                )
 
             if progress is not None: progress(0.6, desc=f"Pulling updates for '{plugin_id}'...")
             origin.pull()
