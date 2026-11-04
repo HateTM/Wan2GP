@@ -2,7 +2,9 @@ import importlib
 import json
 import os
 import re
+import shutil
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -356,7 +358,27 @@ def test_save_block_and_delete_block_api(tmp_path):
     assert compat.catalog()["blocks"] == []
 
 
+def _isolated_wanflow_root(tmp_path, monkeypatch):
+    """A writable plugins root holding a copy of the vendored WanFlow UI, so
+    workflows the test saves can never reach the user's real files. GraphStore
+    writes under ``<plugins_root>/wan2gp-wanflow-ui/workflows``, and the
+    compat facade derives that root from ``STUDIO_PLUGINS_ROOT``."""
+    source = Path(PLUGINS_ROOT) / "wan2gp-wanflow-ui"
+    if not (source / "plugin.py").is_file():
+        pytest.skip("wanflow-ui not installed")
+    target = tmp_path / "plugins" / "wan2gp-wanflow-ui"
+    target.mkdir(parents=True)
+    for item in source.iterdir():
+        if item.is_file() and (item.suffix == ".py" or item.name == "plugin_info.json"):
+            shutil.copy2(item, target / item.name)
+    (target / "workflows").mkdir()
+    (target / "blocks").mkdir()
+    monkeypatch.setenv("STUDIO_PLUGINS_ROOT", str(tmp_path / "plugins"))
+    return target / "workflows"
+
+
 def test_export_import_routes_against_installed_plugin(tmp_path, monkeypatch):
+    store = _isolated_wanflow_root(tmp_path, monkeypatch)
     plugin = WanGPStudioPlugin()
     plugin.server_config = {
         "image_save_path": str(tmp_path / "images"),
@@ -365,33 +387,47 @@ def test_export_import_routes_against_installed_plugin(tmp_path, monkeypatch):
     }
     client = TestClient(plugin.create_web_app())
 
-    if not os.path.isfile(os.path.join(PLUGINS_ROOT, "wan2gp-wanflow-ui", "plugin.py")):
-        pytest.skip("wanflow-ui not installed")
+    # Unique names: even if isolation failed, the test could not clobber a
+    # pre-existing user workflow by overwriting its slug.
+    unique = uuid.uuid4().hex[:8]
+    created_slugs = []
+    try:
+        # Build the workflow through the real import route instead of assuming
+        # a user-created workflow exists: the vendored checkout ships none
+        # (the fork's .gitignore excludes workflows/* as runtime data).
+        created = client.post("/api/workflow/import", json={
+            "name": f"selftest t2v {unique}",
+            "graph": {
+                "name": "Selftest T2V",
+                "nodes": [{"id": "n1", "type": "text_prompt", "params": {"text": "hi"}, "enabled": True}],
+                "edges": [],
+            },
+        })
+        assert created.status_code == 200, created.text
+        slug = created.json()["id"]
+        created_slugs.append(slug)
 
-    # Build the workflow through the real import route instead of assuming a
-    # user-created workflow exists: the vendored checkout ships none (the
-    # fork's .gitignore excludes workflows/* as runtime data).
-    created = client.post("/api/workflow/import", json={
-        "name": "selftest t2v",
-        "graph": {
-            "name": "Selftest T2V",
-            "nodes": [{"id": "n1", "type": "text_prompt", "params": {"text": "hi"}, "enabled": True}],
-            "edges": [],
-        },
-    })
-    assert created.status_code == 200, created.text
-    slug = created.json()["id"]
+        exported = client.get(f"/api/workflow/workflows/{slug}/export")
+        assert exported.status_code == 200, exported.text
+        payload = exported.json()
+        assert payload["schema"] == "wan2gp-wanflow-ui"
+        assert payload["graph"]["nodes"]
 
-    exported = client.get(f"/api/workflow/workflows/{slug}/export")
-    assert exported.status_code == 200, exported.text
-    payload = exported.json()
-    assert payload["schema"] == "wan2gp-wanflow-ui"
-    assert payload["graph"]["nodes"]
+        imported = client.post("/api/workflow/import", json={"graph": payload["graph"], "name": f"selftest copy {unique}"})
+        assert imported.status_code == 200, imported.text
+        assert imported.json()["node_count"] == len(payload["graph"]["nodes"])
+        created_slugs.append(imported.json()["id"])
 
-    imported = client.post("/api/workflow/import", json={"graph": payload["graph"], "name": "selftest copy"})
-    assert imported.status_code == 200, imported.text
-    assert imported.json()["node_count"] == len(payload["graph"]["nodes"])
-
-    for leftover in (imported.json()["id"], slug):
-        cleanup = client.delete(f"/api/workflow/workflows/{leftover}")
-        assert cleanup.status_code == 200, cleanup.text
+        for leftover in (imported.json()["id"], slug):
+            cleanup = client.delete(f"/api/workflow/workflows/{leftover}")
+            assert cleanup.status_code == 200, cleanup.text
+        created_slugs.clear()
+    finally:
+        # Best-effort sweep so a mid-test failure cannot leave test files
+        # behind in the (isolated) store.
+        for leftover in created_slugs:
+            try:
+                client.delete(f"/api/workflow/workflows/{leftover}")
+            except Exception:
+                pass
+    assert list(store.glob("selftest*")) == []

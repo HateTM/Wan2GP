@@ -300,7 +300,14 @@ class WanGPStudioPlugin(WAN2GPPlugin):
     def __init__(self) -> None:
         super().__init__()
         self.name = "WanGP Studio"
-        self.version = "1.3.0"
+        try:
+            self.version = (
+                json.loads((Path(__file__).resolve().parent / "plugin_info.json").read_text(encoding="utf-8"))
+                .get("version")
+                or "1.3.3"
+            )
+        except Exception:
+            self.version = "1.3.3"
         self.description = "Lightweight full-screen workspace for WanGP models, generation and workflows."
         self.type = ["app"]
         self._session = None

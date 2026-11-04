@@ -41,9 +41,11 @@ FETCH_TIMEOUT_SECONDS = 60.0
 REFRESH_COOLDOWN_SECONDS = 120.0
 LOCAL_COMMIT_PREVIEW = 5
 
-#: States that mean "the remote no longer exists" as opposed to transient
-#: network trouble (a failed fetch alone cannot tell them apart).
-_GONE_MARKERS = ("not found", "does not appear to be a git repository")
+#: Only a definitive "this path is not a repository" answer counts as a gone
+#: upstream. GitHub also answers "Repository not found" for live private
+#: repositories the caller lost access to, so a textual 404 is ambiguous and
+#: must stay classified as merely unavailable.
+_GONE_MARKERS = ("does not appear to be a git repository",)
 
 
 def _read_plugin_info(folder: str) -> dict[str, Any]:
@@ -78,10 +80,11 @@ def _default_remote_branch(folder: str) -> str | None:
 
 
 def _remote_gone(folder: str) -> bool:
-    """True when the remote itself reports it no longer exists (deleted or
-    renamed repository, dead path). A bare ``git fetch`` failure cannot tell
-    this from DNS trouble, timeouts or auth prompts - ``ls-remote`` can,
-    because its stderr carries the server's own answer."""
+    """True when the remote definitively no longer hosts a repository at this
+    address (a dead local path). Over the network this is deliberately
+    conservative: GitHub's "Repository not found" is equally the answer for a
+    live private repo the caller lost access to, so such errors stay
+    "unavailable" instead of claiming a deleted upstream."""
     ok, out = _git(["ls-remote", "origin", "HEAD"], folder, timeout=15.0)
     if ok:
         return False
