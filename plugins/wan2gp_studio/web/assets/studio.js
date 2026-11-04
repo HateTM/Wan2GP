@@ -318,6 +318,7 @@
     $("breadcrumb-current").textContent = gallery ? "Gallery" : "Workflow";
     try { history.replaceState(null, "", gallery ? "#gallery" : "#workflow"); } catch (_) {}
     if (gallery && window.WanGPStudioGallery) window.WanGPStudioGallery.activate();
+    if (!gallery && window.WanGPStudioCanvas) window.WanGPStudioCanvas.activate();
   }
 
   function bindEvents() {
@@ -372,8 +373,8 @@
       $("run-from-inspector").disabled = true; $("canvas-model-count").textContent = "No node selected";
       $("settings-state").textContent = "No model selected"; renderModels();
     });
-    $("zoom-in").addEventListener("click", () => updateZoom(10));
-    $("zoom-out").addEventListener("click", () => updateZoom(-10));
+    $("zoom-in") && $("zoom-in").addEventListener("click", () => updateZoom(10));
+    $("zoom-out") && $("zoom-out").addEventListener("click", () => updateZoom(-10));
     $("nav-workflow").addEventListener("click", () => setView("workflow"));
     $("nav-gallery").addEventListener("click", () => setView("gallery"));
     $("nav-models").addEventListener("click", () => $("model-search").focus());
@@ -388,8 +389,8 @@
 
   function updateZoom(delta) {
     state.zoom = Math.max(70, Math.min(130, state.zoom + delta));
-    $("zoom-value").textContent = state.zoom + "%";
-    $("workflow-canvas").style.backgroundSize = (18 * state.zoom / 100) + "px " + (18 * state.zoom / 100) + "px";
+    if ($("zoom-value")) $("zoom-value").textContent = state.zoom + "%";
+    if ($("workflow-canvas")) $("workflow-canvas").style.backgroundSize = (18 * state.zoom / 100) + "px " + (18 * state.zoom / 100) + "px";
   }
 
   window.WanGPStudio = {

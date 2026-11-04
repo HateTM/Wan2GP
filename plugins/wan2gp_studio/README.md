@@ -51,6 +51,14 @@ The first frontend is deliberately a lightweight bootstrap. The visual node canv
 - GET /studio/api/media/{media_id}/file (streams the original file for previews and downloads)
 - POST /studio/api/media/upload (multipart `file`; copies into the matching WanGP output root)
 - DELETE /studio/api/media/{media_id}?confirm=true (removes the file and its .json sidecar)
+- GET /studio/api/environment (capability registry: plugin states, integration levels, licenses)
+- GET /studio/api/workflow/status | /catalog | /workflows[/{slug}] (GET, PUT, DELETE)
+- POST /studio/api/workflow/validate (normalize + cycle/topology check)
+- POST /studio/api/workflow/runs with {graph, inputs}; GET /runs/{run_id}; GET /runs/{run_id}/events (SSE); POST /runs/{run_id}/cancel
+
+## Vendored canvas assets
+
+`web/assets/canvas.{html,css,js}` are the WanFlow UI editor assets (Apache-2.0, © Javier) vendored unchanged to serve the Studio workflow canvas through `register_web_app`; the license text is kept in `web/assets/WANFLOW-LICENSE.txt`. The Studio-side host (`web/assets/workflow.js`) replaces WanFlow's Gradio hidden-button bridge with the `/studio/api/workflow/*` facade.
 
 ## WanGP attribution
 

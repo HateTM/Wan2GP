@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="assets/studio.css">
   <script src="assets/studio.js" defer></script>
   <script src="assets/gallery.js" defer></script>
+  <script src="assets/workflow.js" defer></script>
 </head>
 <body>
 <div class="app-shell">
@@ -60,18 +61,19 @@
         </section>
 
         <section class="panel canvas-panel">
-          <div class="canvas-toolbar"><div><span class="panel-kicker">CANVAS</span><strong>Untitled workflow</strong><span class="draft-tag">DRAFT</span></div><div class="canvas-tools"><button class="small-tool" id="zoom-out">−</button><span id="zoom-value">100%</span><button class="small-tool" id="zoom-in">+</button></div></div>
-          <div class="canvas" id="workflow-canvas">
-            <div class="canvas-grid"></div>
-            <div class="canvas-hint" id="canvas-hint"><div class="hint-icon">＋</div><strong>Select a model to start</strong><span>Choose a model from the library to inspect its native settings and create a generation node.</span></div>
-            <div class="workflow-node" id="generation-node" hidden>
-              <div class="node-top"><span class="node-type-icon">◈</span><span class="node-kind">GENERATION</span><span class="node-menu">···</span></div>
-              <div class="node-title" id="node-title">Generation</div><div class="node-model" id="node-model">Select a model</div>
-              <div class="node-divider"></div><div class="node-ports"><span><i class="port input"></i> Prompt</span><span><i class="port output"></i> Media</span></div>
-              <div class="node-footer"><span class="node-status" id="node-status">Ready</span><span>WanGP</span></div>
+          <div class="canvas-toolbar"><div><span class="panel-kicker">WORKFLOW</span><select id="workflow-select" class="preset-select workflow-select" aria-label="Workflow"><option value="">Loading…</option></select><span class="draft-tag" id="workflow-state">CANVAS</span></div><div class="canvas-tools"><button class="small-tool" id="workflow-new" title="New workflow">＋</button><button class="small-tool" id="workflow-save" title="Save workflow">⌸</button><button class="small-tool" id="workflow-run" title="Run workflow">▶</button><button class="small-tool" id="workflow-cancel" title="Cancel run" disabled>■</button></div></div>
+          <div class="canvas workflow-canvas-host" id="workflow-canvas-host">
+            <div class="canvas-empty" id="workflow-unavailable" hidden></div>
+            <iframe id="workflow-frame" class="workflow-frame" title="Workflow canvas" sandbox="allow-scripts allow-pointer-lock allow-downloads" hidden></iframe>
+            <div class="hidden-legacy" aria-hidden="true">
+              <div class="canvas-hint" id="canvas-hint"></div>
+              <div class="workflow-node" id="generation-node" hidden>
+                <span id="node-title"></span><span id="node-model"></span><span id="node-status"></span>
+              </div>
+              <span id="canvas-model-count"></span>
             </div>
           </div>
-          <div class="canvas-footer"><span><kbd>/</kbd> Search models <span class="footer-divider">·</span> <kbd>Scroll</kbd> Zoom</span><span id="canvas-model-count">No node selected</span></div>
+          <div class="canvas-footer"><span id="workflow-status">Workflow canvas</span><span id="workflow-node-count"></span></div>
         </section>
 
         <section class="panel inspector-panel">
