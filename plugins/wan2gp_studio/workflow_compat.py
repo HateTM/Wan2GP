@@ -850,6 +850,8 @@ class WorkflowCompat:
                 node_callback=node_event,
             )
             record["outputs"] = list(outputs or [])
+            for output in outputs or []:
+                self._write_output_sidecar(output, record["id"], str(graph.get("name") or "Workflow"))
             record["variables"] = dict(variables or {})
             record["status"] = "cancelled" if record["cancel_requested"] and not outputs else "completed"
             record["progress"] = 100 if record["status"] == "completed" else record["progress"]
@@ -878,6 +880,32 @@ class WorkflowCompat:
                 except Exception as exc:
                     logger.warning("release_workflow_models failed for run %s: %s", record["id"], exc)
             self._emit(record, "closed", {"run_id": record["id"]})
+
+    def _write_output_sidecar(self, path: str | Path, run_id: str, graph_name: str) -> None:
+        """Link a produced file back to its workflow run.
+
+        Only files inside this plugin's output root get a sidecar (imported
+        inputs must not be touched). An existing sidecar - WanGP's own
+        settings JSON - is merged, not replaced."""
+        try:
+            file_path = Path(path)
+            if self._output_root not in file_path.parents:
+                return
+            sidecar = file_path.with_suffix(".json")
+            data: dict[str, Any] = {}
+            if sidecar.is_file():
+                try:
+                    loaded = json.loads(sidecar.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        data = loaded
+                except ValueError:
+                    data = {}
+            workflow = data.get("workflow") if isinstance(data.get("workflow"), dict) else {}
+            workflow.update({"run_id": str(run_id), "graph": str(graph_name)})
+            data["workflow"] = workflow
+            sidecar.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError:
+            pass
 
     def snapshot(self, run_id: str) -> dict[str, Any] | None:
         with self._lock:

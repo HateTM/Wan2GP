@@ -554,8 +554,12 @@
         stage.appendChild(note);
       }
     }
+    const workflow = detail.workflow || {};
     const facts = [
       factRow("Type", KIND_LABEL[item.kind] || item.kind),
+      factRow("Workflow", workflow.run_id
+        ? (workflow.graph || "Workflow") + " · " + String(workflow.run_id).slice(0, 8)
+        : ""),
       factRow("Size", fmtSize(item.size)),
       factRow("Dimensions", item.width ? item.width + "×" + item.height : (item.resolution || "")),
       factRow("Duration", item.duration ? fmtDuration(item.duration) : ""),

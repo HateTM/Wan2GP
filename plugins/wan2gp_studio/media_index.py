@@ -587,6 +587,19 @@ class MediaIndex:
                 payload["metadata"] = read_app_metadata(path)
         except Exception as exc:  # broken or truncated files must not fail the API
             payload["metadata_error"] = f"{type(exc).__name__}: {exc}"
+        sidecar = os.path.splitext(entry["path"])[0] + ".json"
+        if os.path.isfile(sidecar):
+            try:
+                with open(sidecar, encoding="utf-8") as handle:
+                    data = json.load(handle)
+                workflow = data.get("workflow") if isinstance(data, dict) else None
+                if isinstance(workflow, dict) and workflow:
+                    payload["workflow"] = {
+                        key: value for key, value in workflow.items()
+                        if isinstance(value, (str, int, float))
+                    }
+            except (OSError, ValueError):
+                pass
         return payload
 
     # -- actions -------------------------------------------------------

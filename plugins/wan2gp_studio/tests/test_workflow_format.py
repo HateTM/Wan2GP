@@ -431,3 +431,96 @@ def test_export_import_routes_against_installed_plugin(tmp_path, monkeypatch):
             except Exception:
                 pass
     assert list(store.glob("selftest*")) == []
+
+
+def _make_test_video(path):
+    import shutil
+    import subprocess
+
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg is not available")
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=64x64:rate=8",
+         "-pix_fmt", "yuv420p", str(path)],
+        check=True, capture_output=True, timeout=60,
+    )
+
+
+def test_workflow_run_links_outputs_to_the_run(tmp_path, monkeypatch):
+    """1.4.0 Workflow → Gallery: a finished run writes a sidecar that names
+    the run, and the media detail surfaces it for the lightbox."""
+    import time as _time
+
+    from wan2gp_studio.media_index import MediaIndex, media_id_for
+
+    workflows_dir = _isolated_wanflow_root(tmp_path, monkeypatch)
+    plugin = WanGPStudioPlugin()
+    plugin.server_config = {
+        "image_save_path": str(tmp_path / "images"),
+        "save_path": str(tmp_path / "videos"),
+        "audio_save_path": str(tmp_path / "audio"),
+    }
+    plugin.get_session = lambda: {"_ui_local": None}  # no live WanGP session in tests
+    client = TestClient(plugin.create_web_app())
+
+    source = tmp_path / "source.mp4"
+    _make_test_video(source)
+    graph = {
+        "name": "Link test",
+        "nodes": [
+            {"id": "n1", "type": "input_video", "params": {"path": str(source)}, "enabled": True},
+            {"id": "n2", "type": "ffmpeg_trim", "params": {"start": 0, "duration": 0.5}, "enabled": True},
+        ],
+        "edges": [{"source": {"node": "n1", "port": "video"}, "target": {"node": "n2", "port": "video"}}],
+    }
+    run = client.post("/api/workflow/runs", json={"graph": graph, "inputs": []})
+    assert run.status_code == 200, run.text
+    run_id = run.json()["run_id"]
+
+    deadline = _time.time() + 45
+    record = None
+    while _time.time() < deadline:
+        record = client.get(f"/api/workflow/runs/{run_id}").json()
+        if record.get("status") != "running":
+            break
+        _time.sleep(0.5)
+    assert record["status"] == "completed", record
+    outputs = record["outputs"]
+    assert outputs, record
+    # outputs include consumed inputs too: the produced file lives in the
+    # plugin's workflow_outputs root, the consumed source does not
+    produced = next(
+        (Path(item) for item in outputs if "workflow_outputs" in str(item)), None
+    )
+    assert produced is not None, outputs
+    sidecar = produced.with_suffix(".json")
+    assert sidecar.is_file()
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert data["workflow"]["run_id"] == run_id
+    assert data["workflow"]["graph"] == "Link test"
+
+    index = MediaIndex(lambda: [str(produced.parent)], min_refresh_interval=0.0)
+    index.refresh(force=True)
+    index.index_file(str(produced))
+    entry = index.get(media_id_for(str(produced)))
+    detail = index.detail(entry)
+    assert detail["workflow"]["run_id"] == run_id
+    assert detail["workflow"]["graph"] == "Link test"
+
+
+def test_output_sidecar_never_touches_files_outside_output_root(tmp_path, monkeypatch):
+    from wan2gp_studio.workflow_compat import WorkflowCompat
+
+    compat = WorkflowCompat.__new__(WorkflowCompat)  # only the helper runs
+    compat._output_root = tmp_path / "workflow_outputs"
+    outside = tmp_path / "elsewhere.png"
+    outside.write_bytes(b"x")
+    compat._write_output_sidecar(outside, "run-1", "Graph")
+    assert not outside.with_suffix(".json").exists()
+
+    inside = compat._output_root / "produced.png"
+    inside.parent.mkdir(parents=True)
+    inside.write_bytes(b"x")
+    compat._write_output_sidecar(inside, "run-1", "Graph")
+    data = json.loads(inside.with_suffix(".json").read_text(encoding="utf-8"))
+    assert data["workflow"]["run_id"] == "run-1"
