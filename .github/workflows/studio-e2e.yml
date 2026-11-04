@@ -44,6 +44,7 @@ jobs:
             "ffmpeg-python" \
             "opencv-python-headless>=4.12.0.88" \
             "imageio" \
+            "imageio-ffmpeg" \
             "soundfile" \
             "uvicorn" \
             "playwright==1.49.1"
