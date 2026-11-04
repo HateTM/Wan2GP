@@ -110,6 +110,7 @@
     frame.srcdoc = document_;
     state.frame = frame;
     $("workflow-unavailable").hidden = true;
+    setTimeout(flushPendingMedia, 150);
   }
 
   async function rebuildWithCatalog(graph) {
@@ -458,21 +459,30 @@
     }
   }
 
+  // "Use in workflow" (Gallery lightbox): feed a media file into the canvas
+  // as an input node. The runner prefers the node's explicit path over the
+  // runtime upload slots (graph_runner params.path). Requests arriving before
+  // the canvas exists (the user jumps straight here from the gallery) queue up
+  // and are flushed after every buildFrame() - activate() rebuilds the frame
+  // from an empty literal, so folding nodes into state.graph would lose them.
+  state.pendingMedia = [];
+
+  function flushPendingMedia() {
+    const frameWindow = state.frame && state.frame.contentWindow;
+    if (!frameWindow) return;
+    for (const request of state.pendingMedia.splice(0)) {
+      frameWindow.postMessage({
+        type: "WAN2GP_WORKFLOWS_V2",
+        action: "add_media",
+        kind: request.kind,
+        path: String(request.path || "")
+      }, "*");
+    }
+  }
+
   function addMediaInput(kind, path) {
-    // "Use in workflow" (Gallery lightbox): feed a media file into the canvas
-    // as an input node. The runner prefers the node's explicit path over the
-    // runtime upload slots (graph_runner params.path).
     const nodeType = { image: "input_image", video: "input_video", audio: "input_audio" }[kind];
     if (!nodeType) return false;
-    const node = {
-      id: "media_" + Math.random().toString(36).slice(2, 8),
-      type: nodeType,
-      title: { input_image: "Input Image", input_video: "Input Video", input_audio: "Input Audio" }[nodeType],
-      position: { x: 120, y: 80 },
-      params: { path: String(path || "") },
-      ui: {},
-      enabled: true
-    };
     if (state.frame && state.frame.contentWindow) {
       state.frame.contentWindow.postMessage({
         type: "WAN2GP_WORKFLOWS_V2",
@@ -482,11 +492,7 @@
       }, "*");
       return true;
     }
-    // The canvas is not built yet (the user jumped straight here from the
-    // gallery): fold the node into the graph buildFrame() will render.
-    const graph = state.graph || (state.graph = { name: "Untitled workflow", nodes: [], edges: [], groups: [] });
-    graph.nodes.push(node);
-    if (state.frame === null && !$("workflow-frame").srcdoc) buildFrame(graph).catch(() => {});
+    state.pendingMedia.push({ kind: kind, path: String(path || "") });
     return true;
   }
 

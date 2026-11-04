@@ -16,6 +16,7 @@ import os
 #: Test modules whose import chain reaches mmgp; only skipped when CUDA is
 #: genuinely unavailable.
 CUDA_DEPENDENT_MODULES = [
+    "test_input_path_param.py",
     "test_graph_runner_multiprompt.py",
     "test_graph_runner_settings.py",
     "test_graph_runner_unload.py",

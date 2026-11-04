@@ -181,7 +181,7 @@ def test_use_in_workflow_adds_input_node(page):
         " && document.getElementById('nav-workflow').classList.contains('active')", timeout=10000
     )
     page.wait_for_selector("#workflow-frame", timeout=20000)
-    page.wait_for_timeout(1500)  # the srcdoc iframe builds and answers the graph handshake
+    page.wait_for_timeout(2500)  # pending-media flush + graph handshake
     graph = page.evaluate(
         "window.WanGPStudioCanvas.getGraph().then((graph) => ({"
         " types: graph.nodes.map((node) => node.type),"
