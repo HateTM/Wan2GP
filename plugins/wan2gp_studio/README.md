@@ -32,6 +32,8 @@ v1.0 covers the Dashboard, Workflow (node canvas with save/run/cancel and import
 - Job progress, status, completion, errors and cancellation through the existing API.
 - SSE progress stream with keep-alive comments and a bounded in-memory job history (maximum 50 queued/running Studio jobs).
 - Media Center discovery API: the four WanGP output roots, dedicated workspace folders and optional workflow outputs, with embedded metadata, World manifest summaries and thumbnails from the shared Deepy engine.
+- Incremental media index: a rescan only re-lists the directories whose mtime changed (new/deleted/renamed children); a full reconcile runs on forced rescans and at least every 60 s, so in-place overwrites are picked up there. `GET /api/media/roots` reports the last scan (`mode`, visited/reused directories, duration).
+- Real SendTo hand-off: Studio reads the target plugin's `sendto.json` manifest (the same contract the SendTo plugin uses), parks a one-shot hand-off id, and opens the WanGP UI with `?studio_sendto=<id>`. A hidden Studio control in the main Gradio UI receives the live session `state`, appends `{"path", "slot"}` to the manifest's `inbox_key`, and the injected JS selects the target tab so the plugin drains the frame into the chosen slot (Image Suite: Img2Img / MultiCanvas / Modify). No code is copied from the target plugin; without the bridge or the plugin the UI degrades to a copied path.
 
 The first frontend is deliberately a lightweight bootstrap. The visual node canvas is currently a single generation-node workspace; graph editing, workflow persistence, multi-node execution, media editors, a real gallery browser and RAM/VRAM telemetry are follow-up milestones. The queue panel shows Studio-submitted jobs, not every task submitted from the native WanGP UI.
 
@@ -52,6 +54,9 @@ The first frontend is deliberately a lightweight bootstrap. The visual node canv
 - GET /studio/api/media/{media_id}/thumbnail (JPEG from the shared Deepy thumbnail engine)
 - GET /studio/api/media/{media_id}/file (streams the original file for previews and downloads)
 - POST /studio/api/media/upload (multipart `file`; copies into the matching WanGP output root)
+- POST /studio/api/media/{media_id}/sendto with {"plugin", "slot"} (parks a one-shot hand-off and returns a `/?studio_sendto=` URL; see below)
+- GET /studio/api/sendto/targets (SendTo-capable plugins from their `sendto.json` manifests, plus bridge availability)
+- GET /studio/api/sendto/{handoff_id} (hand-off status: pending / consumed / expired)
 - DELETE /studio/api/media/{media_id}?confirm=true (removes the file and its .json sidecar)
 - GET /studio/api/environment (capability registry: plugin states, integration levels, licenses)
 - GET /studio/api/workflow/status | /catalog | /workflows[/{slug}] (GET, PUT, DELETE)

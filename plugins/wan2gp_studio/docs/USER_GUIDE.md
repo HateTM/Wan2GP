@@ -41,10 +41,18 @@ Deep links: `#dashboard`, `#workflow`, `#gallery`, `#resources`, `#settings`.
 
 - Filters: All / Images / Videos / Audio / Worlds / 3D; search matches file names and prompt hints; six sort modes.
 - Cards are virtualized: only the visible window is rendered, thumbnails are produced on demand by WanGP's own thumbnail engine.
-- Lightbox: preview, facts (type, size, dimensions, duration, seed, model, date), prompt with **Copy**, **Use settings** (loads the generation parameters back into the inspector), **Image Suite** (deep link, see below), **Download**, **Delete**.
+- Lightbox: preview, facts (type, size, dimensions, duration, seed, model, date), prompt with **Copy**, **Use settings** (loads the generation parameters back into the inspector), **Send to plugin** (real SendTo, see below), **Copy path**, **Download**, **Delete**.
 - **Select** mode enables multi-select and bulk delete. Deletion is permanent and also removes the `.json` sidecar when present.
 - **Upload** (button or drag & drop) copies images/videos/audio into the matching WanGP output root, sanitizes names and never overwrites existing files.
 - Worlds (`.wgpworld`) are shown with their poster and manifest facts; exploration stays in the native Worlds gallery.
+
+## Send to plugin (SendTo)
+
+If an installed plugin ships a `sendto.json` manifest (Image Suite does: *Img2Img*, *MultiCanvas*, *Modify*), the lightbox shows a **Send to plugin** row. Pick a slot, press **Send**, and Studio opens the WanGP UI with a one-shot hand-off: the frame lands in that plugin's inbox and its tab is selected, so the image is already loaded in the chosen slot — no clipboard pasting.
+
+- The hand-off is one-shot and expires after two minutes; send again if the tab sat idle.
+- Popups must be allowed for the WanGP origin; if the browser blocks the tab, Studio shows the URL to open.
+- Without a SendTo-capable plugin the row shows "No SendTo target" and **Copy path** stays as the manual fallback.
 
 ## Workflow
 

@@ -167,6 +167,93 @@ def test_refresh_picks_up_new_files(index, media_root):
     assert index.stats()["total"] == before + 1
 
 
+# -- incremental scanning -------------------------------------------------
+
+
+def test_full_scan_reports_visited_directories(index):
+    scan = index.stats()["scan"]
+    assert scan["mode"] == "full"
+    assert scan["visited_directories"] >= 1
+    assert scan["reused_directories"] == 0
+    assert scan["files"] == index.stats()["total"]
+
+
+def test_incremental_scan_reuses_unchanged_directories(index):
+    index.refresh(force=True)  # seed the directory cache
+    index.refresh(wait=True)  # nothing changed: pure reuse
+    scan = index.stats()["scan"]
+    assert scan["mode"] == "incremental"
+    assert scan["visited_directories"] == 0
+    assert scan["reused_directories"] == scan["directories"]
+    assert index.stats()["total"] == 5
+
+
+def test_incremental_scan_detects_new_file(index, media_root):
+    index.refresh(force=True)
+    time.sleep(0.05)  # directory mtime resolution is coarse on some filesystems
+    _make_png(media_root / "added.png")
+    index.refresh(wait=True)
+    scan = index.stats()["scan"]
+    assert scan["mode"] == "incremental"
+    assert scan["visited_directories"] >= 1
+    assert index.stats()["total"] == 6
+
+
+def test_incremental_scan_detects_new_subdirectory(index, media_root):
+    index.refresh(force=True)
+    time.sleep(0.05)
+    nested = media_root / "sub"
+    nested.mkdir()
+    _make_png(nested / "deep.png")
+    index.refresh(wait=True)
+    assert index.stats()["total"] == 6
+    assert index.query(q="deep.png")["items"][0]["relative"].replace("\\", "/") == "sub/deep.png"
+
+
+def test_incremental_scan_drops_deleted_files(index, media_root):
+    index.refresh(force=True)
+    time.sleep(0.05)
+    (media_root / "plain.png").unlink()
+    index.refresh(wait=True)
+    assert index.stats()["total"] == 4
+    assert index.query(q="plain.png")["total"] == 0
+
+
+def test_index_file_survives_incremental_scan(index, media_root):
+    index.refresh(force=True)
+    path = media_root / "single.png"
+    _make_png(path)
+    assert index.index_file(str(path)) is not None
+    index.refresh(wait=True)  # incremental: single.png lives in a cached directory
+    assert index.query(q="single.png")["total"] == 1
+
+
+def test_full_scan_reconciles_overwritten_files(index, media_root):
+    """Overwriting in place does not touch the parent directory, so an
+    incremental pass keeps the old facts until the next full reconcile."""
+    index.refresh(force=True)
+    before = index.query(q="plain.png")["items"][0]
+    assert before["size"] > 0
+    time.sleep(0.05)
+    _make_png(media_root / "plain.png", size=(96, 72))
+    incremental = index.query(q="plain.png")["items"][0]
+    assert incremental["size"] == before["size"]  # stale by design
+    index.refresh(force=True)
+    refreshed = index.query(q="plain.png")["items"][0]
+    assert refreshed["size"] != before["size"]
+    assert (refreshed["width"], refreshed["height"]) == (96, 72)
+
+
+def test_index_file_updates_directory_cache_for_upload(index, media_root):
+    index.refresh(force=True)
+    path = media_root / "upload.png"
+    _make_png(path)
+    entry = index.index_file(str(path))
+    with index._lock:
+        cached = index._dir_cache[os.path.normcase(os.path.abspath(str(media_root)))]
+        assert any(item["id"] == entry["id"] for item in cached["entries"])
+
+
 def test_delete_requires_known_id_and_respects_roots(index, media_root):
     assert index.delete("missing-id") is False
     item = index.query(q="plain.png")["items"][0]

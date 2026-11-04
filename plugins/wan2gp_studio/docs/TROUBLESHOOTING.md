@@ -41,13 +41,20 @@ Expected: the running node is marked `cancelled` and the run status becomes `can
 ## Gallery is empty
 
 - Check **Settings → Media roots**: the four output paths from `wgp_config.json` (`save_path`, `image_save_path`, `audio_save_path`, `mesh_save_path`) plus dedicated workspace folders and optional `workflow_outputs`.
-- Press **Rescan**. The index rescans at most every 3 seconds.
+- Press **Rescan**. Scans are incremental: only directories whose mtime changed are re-listed; a full reconcile runs on every forced rescan (and at least every 60 s), so overwritten files are picked up there.
 - `.wgpworld` files exist only next to their generated `.mp4`; files uploaded through Studio are images/videos/audio only.
 
 ## Upload rejected
 
 - `400 Unsupported media type` — only image/video/audio extensions are accepted.
 - `413 File is larger than 512 MB` — the limit is `MEDIA_UPLOAD_MAX_BYTES` in `plugin.py`.
+
+## Send to plugin does nothing
+
+- `No SendTo target` — no installed plugin ships a `sendto.json` manifest; install Image Suite from the Plugin Manager and restart WanGP.
+- `Bridge unavailable` — the hidden Studio bridge in the main WanGP UI is missing (its anchor is the generation status block). Update Studio, restart WanGP; the console prints `[Studio] SendTo bridge …` if the anchor was not found. The **Copy path** button stays available.
+- `hand-off expired` — the tab opened from the send was idle for over two minutes; send again from the Studio lightbox.
+- Nothing loads in the target tab — the send must end on that plugin's tab so its inbox drains; the toast names the plugin and slot it was sent to.
 
 ## Jobs SSE replays history
 

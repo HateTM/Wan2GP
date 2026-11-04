@@ -33,6 +33,9 @@
     queryTimer: null,
     environment: null,
     environmentAt: 0,
+    sendTargets: null,
+    sendTargetsAt: 0,
+    sendBridge: true,
     ticking: false
   };
 
@@ -297,39 +300,109 @@
     return (state.environment && state.environment.plugins || []).find((plugin) => plugin.id === "ImageSuite-Wan2GP") || null;
   }
 
+  async function ensureSendTargets() {
+    if (state.sendTargets && Date.now() - state.sendTargetsAt < 60000) return state.sendTargets;
+    try {
+      const payload = await api("api/sendto/targets");
+      state.sendTargets = Array.isArray(payload.targets) ? payload.targets : [];
+      state.sendBridge = payload.bridge !== false;
+    } catch (_) {
+      state.sendTargets = [];
+      state.sendBridge = false;
+    }
+    state.sendTargetsAt = Date.now();
+    return state.sendTargets;
+  }
+
+  function renderSendTargets(targets) {
+    const select = $("lightbox-suite-target");
+    const previous = select.value;
+    select.replaceChildren();
+    for (const target of targets) {
+      const option = document.createElement("option");
+      option.value = target.plugin + "|" + target.slot;
+      option.textContent = (target.plugin_label || target.plugin) + " · " + (target.label || target.slot);
+      if (target.enabled === false) {
+        option.textContent += " (disabled)";
+        option.disabled = true;
+      }
+      select.appendChild(option);
+    }
+    if (previous) select.value = previous;
+    select.hidden = targets.length === 0;
+  }
+
+  function sendBridgeAvailable() {
+    return state.sendBridge !== false;
+  }
+
   function updateSuiteButton() {
     const button = $("lightbox-suite");
+    const copy = $("lightbox-suite-copy");
     if (!button) return;
     const plugin = imageSuitePlugin();
-    if (!plugin) {
-      button.textContent = "Image Suite · unknown";
-    } else if (plugin.state === "enabled") {
-      button.textContent = "Edit in Image Suite";
-    } else if (plugin.state === "not_installed") {
-      button.textContent = "Image Suite · not installed";
+    const hasTargets = (state.sendTargets || []).length > 0;
+    button.disabled = !hasTargets || !sendBridgeAvailable();
+    if (!hasTargets) {
+      button.textContent = plugin && plugin.state === "not_installed" ? "No SendTo plugin" : "No SendTo target";
+    } else if (!sendBridgeAvailable()) {
+      button.textContent = "Bridge unavailable";
     } else {
-      button.textContent = "Image Suite · " + plugin.state;
+      button.textContent = "Send";
+    }
+    if (copy) copy.hidden = !(state.detail && state.detail.item);
+    if (plugin && plugin.state && plugin.state !== "enabled" && hasTargets) {
+      button.title = plugin.state === "disabled"
+        ? "Image Suite is installed but disabled in the WanGP Plugin Manager."
+        : "Target plugin state: " + plugin.state;
+    } else {
+      button.removeAttribute("title");
     }
   }
 
-  async function editInImageSuite() {
-    await ensureEnvironment();
-    const plugin = imageSuitePlugin();
-    if (!plugin || plugin.state === "not_installed") {
-      toast("Image Suite is not installed. Install it from the WanGP Plugin Manager.", true);
-      return;
-    }
-    if (plugin.state !== "enabled") {
-      toast("Image Suite is installed but disabled. Enable it in the WanGP Plugin Manager and restart WanGP.", true);
-      return;
-    }
+  async function copySelectedPath() {
     const item = state.detail && state.detail.item;
     if (!item) return;
     try {
       await navigator.clipboard.writeText(item.path || item.name || "");
-    } catch (_) {}
-    window.open("/", "_blank", "noopener");
-    toast("Image Suite opened in the WanGP UI. File path copied for its Open action.");
+      toast("File path copied.");
+    } catch (_) {
+      toast("Clipboard is unavailable.", true);
+    }
+  }
+
+  async function sendToTarget() {
+    const item = state.detail && state.detail.item;
+    if (!item) return;
+    await ensureSendTargets();
+    const select = $("lightbox-suite-target");
+    const [plugin, slot] = String(select.value || "").split("|");
+    if (!plugin || !slot) {
+      toast("No SendTo target is installed. Install Image Suite from the WanGP Plugin Manager.", true);
+      return;
+    }
+    let payload;
+    try {
+      payload = await api("api/media/" + encodeURIComponent(item.id) + "/sendto", {
+        method: "POST",
+        body: JSON.stringify({ plugin, slot })
+      });
+    } catch (error) {
+      toast(error.message, true);
+      return;
+    }
+    if (payload.bridge === false) {
+      toast("The WanGP SendTo bridge is not loaded. Restart WanGP, then retry.", true);
+      return;
+    }
+    const opened = window.open(payload.url, "_blank", "noopener");
+    const target = payload.handoff || {};
+    const label = (target.plugin_label || plugin) + (target.slot_label ? " · " + target.slot_label : "");
+    if (!opened) {
+      toast("Popup blocked. Open " + window.location.origin + payload.url + " to finish the send to " + label + ".", true);
+      return;
+    }
+    toast("Opening WanGP to send this frame to " + label + "…");
   }
 
   async function openLightbox(id) {
@@ -412,6 +485,12 @@
     download.setAttribute("href", fileUrl);
     download.setAttribute("download", item.name || "media");
     ensureEnvironment().then(updateSuiteButton).catch(() => {});
+    ensureSendTargets()
+      .then((targets) => {
+        renderSendTargets(targets);
+        updateSuiteButton();
+      })
+      .catch(() => {});
     if (world && world.segments) {
       const segments = document.createElement("div");
       segments.className = "lightbox-segments";
@@ -536,7 +615,10 @@
     });
     $("lightbox-reuse").addEventListener("click", reuseSettings);
     $("lightbox-suite").addEventListener("click", () => {
-      editInImageSuite().catch((error) => toast(error.message, true));
+      sendToTarget().catch((error) => toast(error.message, true));
+    });
+    $("lightbox-suite-copy").addEventListener("click", () => {
+      copySelectedPath().catch((error) => toast(error.message, true));
     });
     $("lightbox-delete").addEventListener("click", () => {
       if (state.detail) deleteMedia([state.detail.item.id], state.detail.item.name);

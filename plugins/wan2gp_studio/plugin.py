@@ -27,6 +27,108 @@ from .media_index import (
 )
 from .workflow_compat import WorkflowCompat, WorkflowImportError, WorkflowLimitError, WorkflowUnavailable
 from .telemetry import Telemetry
+from .sendto import SendToError, SendToRegistry, inbox_append
+
+
+#: Injected into the WanGP UI. It turns ``?studio_sendto=<handoff id>`` into a real
+#: hand-off: the hidden Studio bridge receives the live Gradio session state, adds
+#: the frame to the target plugin's inbox, and this script then selects that
+#: plugin's tab so the plugin drains the inbox into the picked slot.
+SENDTO_BRIDGE_JS = r"""
+(() => {
+  const STYLE_ID = "studio-sendto-style";
+  function appRoot(){return window.gradioApp ? window.gradioApp() : (document.querySelector("gradio-app")?.shadowRoot || document);}
+  function field(id){return appRoot().querySelector(`#${id} textarea, #${id} input`);}
+  function button(id){return appRoot().querySelector(`#${id} button, #${id}`);}
+  function sleep(ms){return new Promise((resolve) => setTimeout(resolve, ms));}
+  function toast(text, bad){
+    let host = document.getElementById("studio-sendto-toast");
+    if(!host){
+      host = document.createElement("div");
+      host.id = "studio-sendto-toast";
+      host.style.cssText = "position:fixed;right:18px;bottom:18px;z-index:2147483000;max-width:420px;padding:12px 16px;border-radius:10px;background:#1b2430;color:#f4f7fb;font:13px/1.45 system-ui,sans-serif;box-shadow:0 10px 30px rgba(0,0,0,.35);opacity:0;transition:opacity .18s ease";
+      document.body.appendChild(host);
+    }
+    host.textContent = text;
+    host.style.background = bad ? "#5a1f24" : "#1b2430";
+    host.style.opacity = "1";
+  }
+  function installStyle(){
+    if(document.getElementById(STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = STYLE_ID;
+    style.textContent = "#studio-sendto-bridge{display:none !important;}";
+    document.head.appendChild(style);
+  }
+  async function waitFor(check, timeout = 15000, step = 150){
+    const deadline = Date.now() + timeout;
+    while(Date.now() < deadline){
+      try{ const value = await check(); if(value) return value; }catch(_error){}
+      await sleep(step);
+    }
+    return null;
+  }
+  function tabByName(name){
+    const wanted = String(name || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+    if(!wanted) return null;
+    const candidates = appRoot().querySelectorAll('[role="tab"], button');
+    for(const candidate of candidates){
+      const text = String(candidate.textContent || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+      if(text === wanted) return candidate;
+    }
+    return null;
+  }
+  async function statusOf(handoffId){
+    const response = await fetch("studio/api/sendto/" + encodeURIComponent(handoffId), {credentials: "same-origin"});
+    if(!response.ok) throw new Error("status " + response.status);
+    return response.json();
+  }
+  function dropTokenFromAddress(){
+    try{
+      const url = new URL(window.location.href);
+      if(!url.searchParams.has("studio_sendto")) return;
+      url.searchParams.delete("studio_sendto");
+      window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+    }catch(_error){}
+  }
+  async function run(handoffId){
+    let info = null;
+    try{ info = await statusOf(handoffId); }catch(error){ toast("Send to plugin: " + error.message, true); dropTokenFromAddress(); return; }
+    if(!info || info.status !== "pending"){
+      toast("Send to plugin: this hand-off is no longer pending. Send it again from Studio.", true);
+      dropTokenFromAddress();
+      return;
+    }
+    const handoff = info.handoff || {};
+    const element = await waitFor(() => field("studio_sendto_token"));
+    const trigger = await waitFor(() => button("studio_sendto_trigger"));
+    if(!element || !trigger){
+      toast("Send to plugin: the WanGP bridge is not installed. Restart WanGP after updating Studio.", true);
+      dropTokenFromAddress();
+      return;
+    }
+    element.value = handoffId;
+    element.dispatchEvent(new Event("input", {bubbles: true}));
+    element.dispatchEvent(new Event("change", {bubbles: true}));
+    await sleep(80);
+    trigger.click();
+    const consumed = await waitFor(async () => (await statusOf(handoffId)).status === "consumed", 12000, 250);
+    if(!consumed){
+      toast("Send to plugin: WanGP did not accept the frame. Retry from Studio.", true);
+      dropTokenFromAddress();
+      return;
+    }
+    const label = (handoff.plugin_label || "plugin") + (handoff.slot_label ? " · " + handoff.slot_label : "");
+    const tab = await waitFor(() => tabByName(handoff.tab), 8000, 250);
+    if(tab){ tab.click(); toast("Sent to " + label); }
+    else { toast("Sent to " + label + " — switch to that tab to load the frame."); }
+    dropTokenFromAddress();
+  }
+  installStyle();
+  const pendingSend = new URLSearchParams(window.location.search).get("studio_sendto");
+  if(pendingSend) run(pendingSend);
+})();
+"""
 
 
 MEDIA_UPLOAD_MAX_BYTES = 512 * 1024 * 1024
@@ -198,11 +300,15 @@ class WanGPStudioPlugin(WAN2GPPlugin):
     def __init__(self) -> None:
         super().__init__()
         self.name = "WanGP Studio"
-        self.version = "1.2.1"
+        self.version = "1.3.0"
         self.description = "Lightweight full-screen workspace for WanGP models, generation and workflows."
         self.type = ["app"]
         self._session = None
         self._session_lock = threading.Lock()
+        self._sendto = SendToRegistry(self._plugins_root, is_enabled=self._plugin_enabled)
+        #: True once the hidden Gradio bridge is wired into the main UI. Without
+        #: it Studio still serves every route, but a send has nowhere to land.
+        self._sendto_bridge_installed = False
 
     def setup_ui(self) -> None:
         self.request_global("server_config")
@@ -219,6 +325,14 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         ):
             self.request_global(name)
         self.register_web_app("/studio", self.create_web_app)
+        # SendTo needs the session state and a hidden control in the main UI: a
+        # Studio request has no Gradio session of its own.
+        self.request_component("state")
+        self.add_custom_js(SENDTO_BRIDGE_JS)
+        try:
+            self.insert_after("gen_status", self._build_sendto_bridge)
+        except Exception as exc:  # a missing anchor must not break startup
+            print(f"[Studio] SendTo bridge could not be registered: {exc}")
 
     def _get_session(self):
         """Return one cached session bound to the existing WanGP WebUI queue."""
@@ -242,6 +356,80 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             return "wan2gp-wanflow-ui" in (manager.get_all_plugins() or {})
         except Exception:
             return False
+
+    @staticmethod
+    def _plugins_root() -> str:
+        """Folder that holds installed plugins (overridable for tests)."""
+        override = os.environ.get("STUDIO_PLUGINS_ROOT")
+        if override:
+            return override
+        return str(Path(__file__).resolve().parents[1])
+
+    def _plugin_enabled(self, plugin_id: str) -> bool:
+        manager = getattr(getattr(self, "app", None), "plugin_manager", None)
+        if manager is None:
+            return True  # no registry context (tests): installed is the best answer we have
+        try:
+            return plugin_id in (manager.get_all_plugins() or {})
+        except Exception:
+            return False
+
+    # -- SendTo bridge (Gradio side) ------------------------------------
+    def _build_sendto_bridge(self):
+        """Hidden Gradio controls the Studio web app cannot own itself.
+
+        A Studio HTTP handler never sees a Gradio session, so the frame cannot be
+        written into another plugin's inbox from there. This control lives in the
+        main UI: the injected JS fills the token and clicks it, the callback below
+        receives the real ``state`` dict and performs the inbox append.
+        """
+        import gradio as gr
+
+        state_component = getattr(self, "state", None)
+        with gr.Row(visible=True, elem_id="studio-sendto-bridge", elem_classes=["studio-sendto-bridge"]) as container:
+            handoff_box = gr.Textbox(
+                value="",
+                show_label=False,
+                container=False,
+                interactive=True,
+                elem_id="studio_sendto_token",
+            )
+            trigger = gr.Button("Send", elem_id="studio_sendto_trigger", visible=True)
+            result = gr.Textbox(
+                value="",
+                show_label=False,
+                container=False,
+                interactive=False,
+                elem_id="studio_sendto_result",
+            )
+        if state_component is None:
+            print("[Studio] SendTo bridge is inactive: the host 'state' component was not found.")
+            return container
+        trigger.click(
+            fn=self._apply_sendto_handoff,
+            inputs=[state_component, handoff_box],
+            outputs=[state_component, result],
+            queue=False,
+            show_progress="hidden",
+            api_name=False,
+            show_api=False,
+        )
+        self._sendto_bridge_installed = True
+        return container
+
+    def _apply_sendto_handoff(self, state, handoff_id):
+        """Claim a parked hand-off and append it to the target plugin's inbox."""
+        handoff_id = str(handoff_id or "").strip()
+        if not handoff_id:
+            return state, "missing"
+        handoff = self._sendto.take(handoff_id)
+        if handoff is None:
+            return state, "expired"
+        if not os.path.isfile(handoff.path):
+            return state, "missing-file"
+        if not inbox_append(state, handoff.inbox_key, handoff.path, handoff.slot):
+            return state, "no-state"
+        return state, f"sent:{handoff.slot}"
 
     def _media_roots(self) -> list[str]:
         """Output roots of the installed WanGP plus optional media folders."""
@@ -589,6 +777,56 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 content_disposition_type="inline",
             )
 
+        # -- SendTo ----------------------------------------------------
+        @app.get("/api/sendto/targets")
+        def sendto_targets():
+            return {
+                "targets": self._sendto.targets(),
+                "bridge": bool(self._sendto_bridge_installed),
+            }
+
+        @app.post("/api/media/{media_id}/sendto")
+        async def sendto_media(media_id: str, request: Request):
+            media_index.refresh()
+            entry = media_index.get(media_id)
+            if entry is None:
+                raise HTTPException(status_code=404, detail="Media item not found.")
+            try:
+                payload = await request.json()
+            except Exception:
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+            plugin_id = str(payload.get("plugin") or "").strip()
+            slot = str(payload.get("slot") or "").strip()
+            try:
+                if not plugin_id:
+                    manifests = self._sendto.manifests()
+                    if len(manifests) != 1:
+                        raise SendToError(
+                            400,
+                            "Choose the plugin this frame goes to.",
+                            extra={"plugins": sorted(manifests)},
+                        )
+                    plugin_id = next(iter(manifests))
+                handoff = self._sendto.create(entry["path"], entry["kind"], plugin_id, slot)
+            except SendToError as exc:
+                raise HTTPException(status_code=exc.status_code, detail=exc.payload()) from exc
+            return {
+                "handoff_id": handoff.handoff_id,
+                "url": f"/?studio_sendto={handoff.handoff_id}",
+                "bridge": bool(self._sendto_bridge_installed),
+                "handoff": handoff.as_dict(include_path=False),
+            }
+
+        @app.get("/api/sendto/{handoff_id}")
+        def sendto_status(handoff_id: str):
+            payload = {"status": self._sendto.status(handoff_id)}
+            handoff = self._sendto.peek(handoff_id)
+            if handoff is not None:
+                payload["handoff"] = handoff.as_dict(include_path=False)
+            return payload
+
         workflow = WorkflowCompat(
             self,
             plugins_root=os.environ.get("STUDIO_PLUGINS_ROOT") or None,
@@ -625,19 +863,27 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                     registry = manager.get_all_plugins() or {}
                 except Exception:
                     registry = {}
-            plugins_root = Path(__file__).resolve().parents[1]
+            plugins_root = Path(self._plugins_root())
+            manifests = self._sendto.manifests()
             entries = []
             for plugin_id, meta in KNOWN_PLUGINS.items():
                 plugin = registry.get(plugin_id)
                 installed = (plugins_root / plugin_id).is_dir()
-                entries.append({
+                manifest = manifests.get(plugin_id)
+                capabilities = list(meta["capabilities"])
+                if manifest is not None:
+                    capabilities.append("sendto.inbox")
+                entry = {
                     "id": plugin_id,
                     "state": "enabled" if plugin is not None else ("disabled" if installed else "not_installed"),
                     "version": getattr(plugin, "version", None),
                     "integration": meta["integration"],
-                    "capabilities": meta["capabilities"],
+                    "capabilities": capabilities,
                     "license": meta["license"],
-                })
+                }
+                if manifest is not None:
+                    entry["sendto"] = manifest.as_dict()
+                entries.append(entry)
             for plugin_id, plugin in sorted(registry.items()):
                 if plugin_id in KNOWN_PLUGINS:
                     continue

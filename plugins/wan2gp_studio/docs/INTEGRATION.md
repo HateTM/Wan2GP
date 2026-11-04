@@ -17,7 +17,7 @@ Studio is an integration shell. It reaches optional plugins only through documen
 | `wan2gp-wanflow-ui` | L2 (workflow engine) + vendored canvas | Apache-2.0 | No public upstream: treated as a fork we maintain. Canvas assets vendored unchanged into `web/assets/canvas.*` with `WANFLOW-LICENSE.txt` |
 | `wan2gp-status-pro` | L2 (data only) | Public domain | Studio reads the same sources; it does not depend on the plugin's UI injections |
 | `models_manager` | L2 (bundled) | WanGP Community License 2.0 | Bundled plugin, not a third-party dependency; destructive file operations stay in its own UI |
-| `ImageSuite-Wan2GP` | **L1** | WanGP Community License 2.0 | Deep link only; no code copying. Studio opens the native UI and copies the selected file path |
+| `ImageSuite-Wan2GP` | **L1** | WanGP Community License 2.0 | Deep link plus a real SendTo hand-off driven by its `sendto.json` manifest (see below). No code copying: only the documented manifest is read |
 | `wan2gp-lora-manager` | **L1** | **None declared** | No LICENSE in the upstream repository → no import, no copy. Link only |
 | `wan2gp-queue-editor` | **L1** | **None declared** | Same: link only. Live queue work uses `WanGPSession` |
 
@@ -34,6 +34,17 @@ Studio is an integration shell. It reaches optional plugins only through documen
   ]
 }
 ```
+
+Plugins that ship a `sendto.json` manifest additionally carry the `sendto.inbox` capability and a `sendto` object (tab, inbox key, accepted kinds, slots).
+
+## SendTo hand-off (Studio → plugin tab)
+
+A Studio HTTP handler never sees a Gradio session, so it cannot write another plugin's `state[inbox_key]` itself. The hand-off is therefore a two-step protocol, entirely on documented surfaces:
+
+1. **Park** — `POST /api/media/{id}/sendto` validates the request against the target plugin's `sendto.json` (`accepts`, slot list) and parks a one-shot id in `sendto.SendToRegistry` (bounded, 120 s TTL). The answer carries `/?studio_sendto=<id>` for the WanGP UI.
+2. **Deliver** — the injected `SENDTO_BRIDGE_JS` (registered through `add_custom_js`) picks the id up in the newly opened tab, fills a hidden control that Studio inserts after the generation status (`insert_after("gen_status", …)`), and clicks it. The hidden callback receives the live session `state`, appends `{"path", "slot"}` to the manifest's `inbox_key`, and the JS then selects the target tab so the plugin's own `on_tab_select` drain loads the frame.
+
+Rules: the id is consumed exactly once and never carries more than a path + slot; the absolute path never crosses HTTP (the status endpoint answers with names only); a missing manifest, a disabled plugin or a missing bridge each produce a distinct error the UI can explain, with **Copy path** as the manual fallback.
 
 States: `enabled`, `disabled`, `not_installed` (plus `unlicensed` reserved for the UI). The Settings view renders this table; the Workflow view and the Models panel use the same data for their dependency states.
 

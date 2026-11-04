@@ -11,6 +11,12 @@ Design constraints (Roadmap v3, M1):
 - facts are cached per (mtime_ns, size) and invalidated when a file changes;
 - nothing keeps image/video bytes in memory: thumbnails are produced by the shared
   Deepy thumbnail engine from ``shared.deepy.thumbnails``.
+
+Scans are incremental: every directory keeps the entries it produced together with its
+own mtime, and a rescan only lists (``scandir`` + ``stat``) the directories whose mtime
+changed - exactly the set that gained, lost or renamed a child. A full reconcile still
+runs on ``refresh(force=True)`` and every ``full_scan_interval`` seconds, so an in-place
+overwrite (which does not touch the parent directory) is eventually picked up too.
 """
 from __future__ import annotations
 
@@ -171,16 +177,29 @@ class MediaIndex:
         roots_provider: Callable[[], Iterable[str]],
         extra_roots: Iterable[str] = (),
         min_refresh_interval: float = 3.0,
+        full_scan_interval: float = 60.0,
     ) -> None:
         self._roots_provider = roots_provider
         self._extra_roots = tuple(extra_roots)
         self._min_refresh_interval = float(min_refresh_interval)
+        self._full_scan_interval = max(0.0, float(full_scan_interval))
         self._lock = threading.RLock()
         self._scan_lock = threading.Lock()
         self._first_scan = threading.Event()
         self._entries: dict[str, dict[str, Any]] = {}
         self._fact_cache: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
+        #: Directory key -> {"mtime_ns", "entries", "subdirs"} for incremental scans.
+        self._dir_cache: dict[str, dict[str, Any]] = {}
+        self._scan_stats: dict[str, Any] = {
+            "mode": "none",
+            "directories": 0,
+            "visited_directories": 0,
+            "reused_directories": 0,
+            "files": 0,
+            "duration_ms": 0.0,
+        }
         self._scanned_at = 0.0
+        self._last_full_scan = 0.0
 
     # -- roots ---------------------------------------------------------
     def roots(self) -> list[str]:
@@ -203,60 +222,148 @@ class MediaIndex:
     def refresh(self, force: bool = False, wait: bool | None = None) -> dict[str, Any]:
         """Schedule a rescan. The first scan and explicit ``wait=True`` block so
         callers see data; every later rescan runs in a background thread and
-        gallery reads keep serving the previous index without blocking."""
+        gallery reads keep serving the previous index without blocking.
+
+        ``force=True`` asks for a full reconcile; ordinary reads do an
+        incremental pass that only lists the directories that changed.
+        """
         with self._lock:
             now = time.time()
             need_first = not self._first_scan.is_set()
             stale = force or need_first or now - self._scanned_at >= self._min_refresh_interval
+            full = force or need_first or (now - self._last_full_scan) >= self._full_scan_interval
         if not stale:
             return self.stats()
         if wait is None:
             wait = need_first or force
         if wait:
             with self._scan_lock:
-                self._do_scan()
+                self._do_scan(full=full)
             return self.stats()
         if not self._scan_lock.acquire(blocking=False):
             return self.stats()  # a rescan is already running; reads keep serving the current index
-        threading.Thread(target=self._scan_then_release, name="studio-media-scan", daemon=True).start()
+        threading.Thread(
+            target=self._scan_then_release,
+            args=(full,),
+            name="studio-media-scan",
+            daemon=True,
+        ).start()
         return self.stats()
 
-    def _scan_then_release(self) -> None:
+    def _scan_then_release(self, full: bool = False) -> None:
         try:
-            self._do_scan()
+            self._do_scan(full=full)
         finally:
             self._scan_lock.release()
 
-    def _do_scan(self) -> None:
+    @staticmethod
+    def _entry_for(
+        path: str,
+        name: str,
+        kind: str,
+        relative: str,
+        root: str,
+        stat: os.stat_result,
+    ) -> dict[str, Any]:
+        entry_id = media_id_for(path)
+        return {
+            "id": entry_id,
+            "path": path,
+            "name": name,
+            "relative": relative,
+            "root": root,
+            "kind": kind,
+            "size": int(stat.st_size),
+            "mtime": float(stat.st_mtime),
+            "mtime_ns": int(stat.st_mtime_ns),
+        }
+
+    def _scan_directory(
+        self,
+        dirpath: str,
+        root: str,
+        entries: dict[str, dict[str, Any]],
+        counters: dict[str, int],
+        seen_dirs: set[str],
+    ) -> list[str]:
+        """List one directory, cache its entries and return its subdirectories."""
+        try:
+            dir_stat = os.stat(dirpath)
+        except OSError:
+            return []
+        key = os.path.normcase(dirpath)
+        seen_dirs.add(key)
+        cached = self._dir_cache.get(key)
+        if cached is not None and cached["mtime_ns"] == int(dir_stat.st_mtime_ns):
+            # Nothing was added, removed or renamed here: reuse the facts we have.
+            counters["reused"] += 1
+            for entry in cached["entries"]:
+                entries[entry["id"]] = entry
+            return list(cached["subdirs"])
+        counters["visited"] += 1
+        try:
+            with os.scandir(dirpath) as iterator:
+                items = list(iterator)
+        except OSError:
+            return []
+        subdirs: list[str] = []
+        dir_entries: list[dict[str, Any]] = []
+        for item in items:
+            if item.name.startswith("."):
+                continue
+            try:
+                if item.is_dir(follow_symlinks=False):
+                    if item.name in SKIPPED_DIRECTORIES:
+                        continue
+                    subdirs.append(item.path)
+                    continue
+                if not item.is_file(follow_symlinks=False):
+                    continue
+                file_stat = item.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            kind = media_kind(item.name)
+            if kind is None:
+                continue
+            entry = self._entry_for(
+                item.path,
+                item.name,
+                kind,
+                os.path.relpath(item.path, root).replace(os.sep, "/"),
+                root,
+                file_stat,
+            )
+            dir_entries.append(entry)
+            entries[entry["id"]] = entry
+        subdirs.sort(key=str.casefold)
+        dir_entries.sort(key=lambda entry: entry["name"].casefold())
+        counters["files"] += len(dir_entries)
+        self._dir_cache[key] = {
+            "mtime_ns": int(dir_stat.st_mtime_ns),
+            "entries": dir_entries,
+            "subdirs": subdirs,
+        }
+        return subdirs
+
+    def _do_scan(self, full: bool = False) -> None:
+        if full:
+            # A forced pass re-lists every directory; the cache is then rebuilt
+            # from scratch so a renamed or replaced folder cannot survive.
+            self._dir_cache.clear()
         entries: dict[str, dict[str, Any]] = {}
+        counters = {"visited": 0, "reused": 0, "files": 0}
+        seen_dirs: set[str] = set()
         scan_started_ns = time.time_ns()
+        started_at = time.perf_counter()
         for root in self.roots():
-            for dirpath, dirnames, filenames in os.walk(root):
-                dirnames[:] = sorted(
-                    name for name in dirnames
-                    if not name.startswith(".") and name not in SKIPPED_DIRECTORIES
-                )
-                for name in filenames:
-                    kind = media_kind(name)
-                    if kind is None:
-                        continue
-                    path = os.path.join(dirpath, name)
-                    try:
-                        stat = os.stat(path)
-                    except OSError:
-                        continue
-                    entry_id = media_id_for(path)
-                    entries[entry_id] = {
-                        "id": entry_id,
-                        "path": path,
-                        "name": name,
-                        "relative": os.path.relpath(path, root).replace(os.sep, "/"),
-                        "root": root,
-                        "kind": kind,
-                        "size": int(stat.st_size),
-                        "mtime": float(stat.st_mtime),
-                        "mtime_ns": int(stat.st_mtime_ns),
-                    }
+            stack = [root]
+            while stack:
+                dirpath = stack.pop()
+                key = os.path.normcase(dirpath)
+                if key in seen_dirs:
+                    continue
+                stack.extend(self._scan_directory(dirpath, root, entries, counters, seen_dirs))
+        duration_ms = round((time.perf_counter() - started_at) * 1000.0, 2)
         with self._lock:
             # A file indexed while this walk was in flight (e.g. index_file
             # after an upload) may postdate the walk's visit of its directory;
@@ -266,16 +373,30 @@ class MediaIndex:
                     entries[media_id] = entry
             self._entries = entries
             self._scanned_at = time.time()
+            if full:
+                self._last_full_scan = self._scanned_at
+            self._scan_stats = {
+                "mode": "full" if full else "incremental",
+                "directories": len(seen_dirs),
+                "visited_directories": counters["visited"],
+                "reused_directories": counters["reused"],
+                "files": len(entries),
+                "duration_ms": duration_ms,
+            }
             for stale in [key for key in self._fact_cache if key not in entries]:
                 self._fact_cache.pop(stale, None)
+            for stale in [key for key in self._dir_cache if key not in seen_dirs]:
+                self._dir_cache.pop(stale, None)
         self._first_scan.set()
 
     def index_file(self, path: str) -> dict[str, Any] | None:
         """Index one file without walking every media root.
 
         Upload handlers call this instead of a blocking ``refresh(force=True)``
-        so a single new file never stalls the request on a full rescan. Returns
-        ``None`` when the path is outside the roots or is not a media file.
+        so a single new file never stalls the request on a full rescan. The
+        directory cache is updated too, so the next incremental scan keeps the
+        entry instead of dropping it. Returns ``None`` when the path is outside
+        the roots or is not a media file.
         """
         path = os.path.abspath(os.path.expanduser(path))
         root = self._matching_root(path)
@@ -300,9 +421,18 @@ class MediaIndex:
             "mtime": float(stat.st_mtime),
             "mtime_ns": int(stat.st_mtime_ns),
         }
+        parent = os.path.dirname(path)
         with self._lock:
             self._entries[entry_id] = entry
             self._fact_cache.pop(entry_id, None)
+            cached = self._dir_cache.get(os.path.normcase(parent))
+            if cached is not None:
+                cached["entries"] = [item for item in cached["entries"] if item["id"] != entry_id]
+                cached["entries"].append(entry)
+                try:
+                    cached["mtime_ns"] = int(os.stat(parent).st_mtime_ns)
+                except OSError:
+                    cached["mtime_ns"] = -1  # unknown: make the next scan re-list it
         return entry
 
     def stats(self) -> dict[str, Any]:
@@ -314,6 +444,7 @@ class MediaIndex:
             "kinds": kinds,
             "roots": self.roots(),
             "scanned_at": self._scanned_at,
+            "scan": dict(self._scan_stats),
         }
 
     # -- lookup --------------------------------------------------------
@@ -472,6 +603,9 @@ class MediaIndex:
         with self._lock:
             self._entries.pop(media_id, None)
             self._fact_cache.pop(media_id, None)
+            cached = self._dir_cache.get(os.path.normcase(os.path.dirname(path)))
+            if cached is not None:
+                cached["entries"] = [item for item in cached["entries"] if item["id"] != media_id]
         self.refresh(force=True, wait=False)
         return True
 
