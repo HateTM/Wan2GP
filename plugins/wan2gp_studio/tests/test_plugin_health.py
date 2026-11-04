@@ -84,6 +84,17 @@ def health_root(tmp_path):
     _git("add", "-A", cwd=dead_fork)
     _git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "Maintain locally after upstream died", cwd=dead_fork)
 
+    refused = root / "RefusedFork-Clone"
+    _git("clone", "-q", str(upstream), str(refused), cwd=root)
+    _git("remote", "set-url", "origin", "http://127.0.0.1:9/repo.git", cwd=refused)
+    (refused / "local.py").write_text("# local\n", encoding="utf-8")
+    _git("add", "-A", cwd=refused)
+    _git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "Local work, remote refuses connections", cwd=refused)
+
+    stale = root / "Stale-Clone"
+    _git("clone", "-q", str(upstream), str(stale), cwd=root)
+    _git("remote", "set-url", "origin", "http://127.0.0.1:9/repo.git", cwd=stale)
+
     for clone in ("Current-Clone", "Fork-Clone", "Behind-Clone", "Dead-Clone"):
         _git("config", "user.email", "t@t", cwd=root / clone)
         _git("config", "user.name", "t", cwd=root / clone)
@@ -114,13 +125,17 @@ def test_fetch_report_upstream_versions_and_behind(health_root):
     assert states["Behind-Clone"]["behind"] == 1
     assert states["Behind-Clone"]["upstream_version"] == "1.1.0"
     assert states["Fork-Clone"]["state"] == "fork"
-    # a dead remote answers from the refs it still has, flagged as stale
-    assert states["Dead-Clone"]["state"] == "stale-refs"
+    # a deleted remote is confirmed by the server's own answer, not guessed
+    # from a failed fetch
+    assert states["Dead-Clone"]["state"] == "upstream-gone"
     assert states["Dead-Clone"]["error"]
     assert states["Dead-Clone"]["upstream_version"] == "1.0.0"
-    # ... but local work on top of a dead remote is a maintained fork
+    # local work on top of a deleted remote is a maintained fork
     assert states["DeadFork-Clone"]["state"] == "fork-detached"
     assert any("Maintain locally" in title for title in states["DeadFork-Clone"]["local_commits"])
+    # a refusing (but not deleted) remote is only "unavailable"
+    assert states["RefusedFork-Clone"]["state"] == "fork-unavailable"
+    assert states["Stale-Clone"]["state"] == "stale-refs"
 
 
 def test_diverged_fork_is_flagged(health_root):
@@ -140,6 +155,34 @@ def test_service_first_snapshot_is_offline_then_refresh(health_root):
     assert final["status"]["state"] == "done"
     by_id = {item["id"]: item for item in final["plugins"]}
     assert by_id["Current-Clone"]["upstream_version"] == "1.0.0"
+
+
+def test_host_version_read_from_wgp_constant():
+    import re
+
+    from wan2gp_studio.plugin_health import host_wan2gp_version
+
+    version = host_wan2gp_version(REPO_ROOT)
+    assert version and re.match(r"\d+\.\d+", version), version
+
+
+def test_compatibility_verdict_uses_host_version(health_root):
+    items = collect_plugin_health(health_root, fetch=False, wangp_version="18.84")
+    by_id = {item["id"]: item for item in items}
+    # plugins without a declared requirement get no verdict
+    assert by_id["Builtin-Plugin"]["wangp_compatible"] is None
+
+
+def test_compatibility_flags_unreachable_requirement(health_root):
+    import json as _json
+
+    target = health_root / "Builtin-Plugin" / "plugin_info.json"
+    info = _json.loads(target.read_text(encoding="utf-8"))
+    info["wan2gp_version"] = "99.99"
+    target.write_text(_json.dumps(info), encoding="utf-8")
+    items = collect_plugin_health(health_root, fetch=False, wangp_version="18.84")
+    builtin = next(item for item in items if item["id"] == "Builtin-Plugin")
+    assert builtin["wangp_compatible"] is False
 
 
 def test_health_routes_serve_snapshot_and_refresh(tmp_path, monkeypatch):

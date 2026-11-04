@@ -11,13 +11,15 @@
     "fork": ["Local fork", "warn"],
     "fork-diverged": ["Fork diverged", "warn"],
     "fork-detached": ["Local fork · upstream gone", "warn"],
+    "fork-unavailable": ["Local fork · remote unavailable", "warn"],
+    "upstream-gone": ["Upstream gone", "error"],
     "stale-refs": ["Stale refs", "error"],
     "unreachable": ["Remote unreachable", "error"],
     "no-remote": ["No remote", "muted"],
     "no-upstream-ref": ["No upstream ref", "muted"],
     "built-in": ["Built-in", "muted"]
   };
-  const ATTENTION_STATES = ["behind", "fork", "fork-diverged", "fork-detached", "stale-refs", "unreachable"];
+  const ATTENTION_STATES = ["behind", "fork", "fork-diverged", "fork-detached", "fork-unavailable", "upstream-gone", "stale-refs", "unreachable"];
 
   function render(payload) {
     const rows = $("plugins-rows");
@@ -32,6 +34,9 @@
         if (item.branch) detail.push("branch " + item.branch + " · ↑" + (item.ahead || 0) + " ↓" + (item.behind || 0));
         if (item.local_commits && item.local_commits.length) detail.push("Local: " + item.local_commits.join("; "));
         if (item.error) detail.push(item.error);
+        if (item.wangp_compatible === false) {
+          detail.push("Requires WanGP " + (item.wan2gp_version || "?") + " - this host may be incompatible");
+        }
         return "<tr>" +
           '<td class="plugin-name">' + S.esc(item.name || item.id) + '<span class="plugin-id">' + S.esc(item.id) + "</span></td>" +
           "<td>" + S.esc(item.version || "—") + (item.date ? '<span class="plugin-date">' + S.esc(item.date) + "</span>" : "") + "</td>" +
@@ -41,7 +46,9 @@
           "</tr>";
       }).join("");
     }
-    const attention = plugins.filter((item) => ATTENTION_STATES.includes(item.state)).length;
+    const attention = plugins.filter(
+      (item) => ATTENTION_STATES.includes(item.state) || item.wangp_compatible === false
+    ).length;
     const badge = $("plugins-nav-count");
     if (badge) {
       badge.textContent = String(attention);

@@ -497,9 +497,12 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         jobs: dict[str, _JobRecord] = {}
         jobs_lock = threading.Lock()
         media_index = MediaIndex(self._media_roots)
-        from .plugin_health import PluginHealthService
+        from .plugin_health import PluginHealthService, host_wan2gp_version
 
-        plugin_health = PluginHealthService(lambda: self._plugins_root())
+        plugin_health = PluginHealthService(
+            lambda: self._plugins_root(),
+            wangp_version=lambda: host_wan2gp_version(str(Path(__file__).resolve().parents[2])),
+        )
 
         def session_or_503():
             try:

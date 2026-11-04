@@ -11,17 +11,24 @@ instantly with the last known state.
 States (``entry["state"]``):
 - ``built-in``: not a git checkout (bundled with WanGP or hand-placed);
 - ``no-remote``: a checkout without an ``origin`` remote;
-- ``unreachable``: the remote could not be fetched (deleted upstream, offline);
-- ``stale-refs``: the fetch failed but old origin refs allow a best-effort answer;
-- ``fork-detached``: local commits on top of an unreachable remote - a locally
-  maintained fork (deleted upstream), not a broken plugin;
+- ``unreachable``: no usable origin refs at all;
+- ``stale-refs``: the fetch failed (network/auth trouble) but old origin refs
+  allow a best-effort answer;
+- ``upstream-gone``: the remote itself reports the repository no longer exists;
+- ``fork-detached``: local commits on top of a remote that no longer exists -
+  a locally maintained fork, not a broken plugin;
+- ``fork-unavailable``: local commits, remote temporarily unreachable;
 - ``current`` / ``behind`` / ``fork`` / ``fork-diverged``: relative to ``origin/<default>``.
+
+With a ``wangp_version`` provider each entry also carries
+``wangp_compatible`` (``None`` when the plugin declares no requirement).
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
+import re
 import subprocess
 import threading
 import time
@@ -33,6 +40,10 @@ FETCH_TIMEOUT_SECONDS = 60.0
 #: Refuse to hammer every plugin's remote more often than this.
 REFRESH_COOLDOWN_SECONDS = 120.0
 LOCAL_COMMIT_PREVIEW = 5
+
+#: States that mean "the remote no longer exists" as opposed to transient
+#: network trouble (a failed fetch alone cannot tell them apart).
+_GONE_MARKERS = ("not found", "does not appear to be a git repository")
 
 
 def _read_plugin_info(folder: str) -> dict[str, Any]:
@@ -66,13 +77,40 @@ def _default_remote_branch(folder: str) -> str | None:
     return None
 
 
+def _remote_gone(folder: str) -> bool:
+    """True when the remote itself reports it no longer exists (deleted or
+    renamed repository, dead path). A bare ``git fetch`` failure cannot tell
+    this from DNS trouble, timeouts or auth prompts - ``ls-remote`` can,
+    because its stderr carries the server's own answer."""
+    ok, out = _git(["ls-remote", "origin", "HEAD"], folder, timeout=15.0)
+    if ok:
+        return False
+    text = (out or "").lower()
+    return any(marker in text for marker in _GONE_MARKERS)
+
+
+def host_wan2gp_version(repo_root: str | None = None) -> str | None:
+    """Version of the running WanGP host, read from ``wgp.py``'s module
+    constant (importing wgp would start the whole application)."""
+    root = repo_root or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        with open(os.path.join(root, "wgp.py"), encoding="utf-8") as handle:
+            head = handle.read(8192)
+    except OSError:
+        return None
+    match = re.search(r'^WanGP_version\s*=\s*"([^"]+)"', head, re.MULTILINE)
+    return match.group(1) if match else None
+
+
 def collect_plugin_health(
     plugins_root: str | os.PathLike[str] | None,
     *,
     fetch: bool = False,
     fetch_timeout: float = FETCH_TIMEOUT_SECONDS,
+    wangp_version: str | None = None,
 ) -> list[dict[str, Any]]:
-    """One snapshot over ``plugins_root``. ``fetch=True`` contacts remotes."""
+    """One snapshot over ``plugins_root``. ``fetch=True`` contacts remotes;
+    ``wangp_version`` enables the per-plugin compatibility verdict."""
     root = str(plugins_root or "")
     if not root or not os.path.isdir(root):
         return []
@@ -143,9 +181,19 @@ def collect_plugin_health(
             if lok and lout:
                 entry["local_commits"] = lout.splitlines()[:LOCAL_COMMIT_PREVIEW]
         if fetch_error:
-            # Local work on top of a dead remote is a maintained fork, not a
-            # broken plugin; without local commits the answer is just stale.
-            entry["state"] = "fork-detached" if entry["ahead"] else "stale-refs"
+            # A failed fetch is not proof of a deleted upstream: probe the
+            # remote once so "upstream gone" is only claimed when the server
+            # itself says so (404/not found). Local work on top of a dead
+            # remote is a maintained fork, not a broken plugin.
+            gone = _remote_gone(folder)
+            if gone and entry["ahead"]:
+                entry["state"] = "fork-detached"
+            elif gone:
+                entry["state"] = "upstream-gone"
+            elif entry["ahead"]:
+                entry["state"] = "fork-unavailable"
+            else:
+                entry["state"] = "stale-refs"
             entry["error"] = fetch_error
         elif entry["ahead"] and entry["behind"]:
             entry["state"] = "fork-diverged"
@@ -156,15 +204,29 @@ def collect_plugin_health(
         else:
             entry["state"] = "current"
         plugins.append(entry)
+    if wangp_version:
+        from shared.utils.plugins import is_wangp_compatible
+
+        for entry in plugins:
+            required = entry.get("wan2gp_version")
+            entry["wangp_compatible"] = (
+                is_wangp_compatible(str(required), str(wangp_version)) if required else None
+            )
     return plugins
 
 
 class PluginHealthService:
     """Cached health snapshot plus a background upstream refresh."""
 
-    def __init__(self, plugins_root: Callable[[], str], clock: Callable[[], float] = time.time) -> None:
+    def __init__(
+        self,
+        plugins_root: Callable[[], str],
+        clock: Callable[[], float] = time.time,
+        wangp_version: Callable[[], str | None] | None = None,
+    ) -> None:
         self._plugins_root = plugins_root
         self._clock = clock
+        self._wangp_version = wangp_version
         self._lock = threading.RLock()
         self._items: list[dict[str, Any]] = []
         self._last_fetch_at = 0.0
@@ -180,7 +242,7 @@ class PluginHealthService:
         """Current knowledge; the first read builds a local-only (offline) view."""
         with self._lock:
             if not self._items:
-                items = collect_plugin_health(self._plugins_root(), fetch=False)
+                items = collect_plugin_health(self._plugins_root(), fetch=False, wangp_version=self._host_version())
                 self._items = items
                 self._status["finished_at"] = self._clock()
         return {"status": dict(self._status), "plugins": [dict(item) for item in self._items]}
@@ -212,12 +274,18 @@ class PluginHealthService:
         threading.Thread(target=self._run_scan, name="studio-plugin-health", daemon=True).start()
         return self.snapshot()
 
+    def _host_version(self) -> str | None:
+        try:
+            return self._wangp_version() if self._wangp_version else None
+        except Exception:
+            return None
+
     def _run_scan(self) -> dict[str, Any]:
         started = self._clock()
         error: str | None = None
         items: list[dict[str, Any]] = []
         try:
-            items = collect_plugin_health(self._plugins_root(), fetch=True)
+            items = collect_plugin_health(self._plugins_root(), fetch=True, wangp_version=self._host_version())
         except Exception as exc:  # a broken repo must not kill the service
             logger.warning("Plugin health scan failed: %s", exc)
             error = f"{type(exc).__name__}: {exc}"
@@ -225,7 +293,7 @@ class PluginHealthService:
             if items:
                 self._items = items
             elif not self._items:
-                self._items = collect_plugin_health(self._plugins_root(), fetch=False)
+                self._items = collect_plugin_health(self._plugins_root(), fetch=False, wangp_version=self._host_version())
             self._last_fetch_at = started
             self._status = {
                 "state": "error" if error else "done",
