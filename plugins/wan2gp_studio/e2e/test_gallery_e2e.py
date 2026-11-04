@@ -105,13 +105,22 @@ def test_kind_filter_and_search(page):
 def test_long_session_soak(page, tmp_path_factory):
     """Stage-E soak: repeated deep scrolls, filter resets and an upload must
     leave the bounded stores bounded - no growth creep over a long session."""
+    # Earlier tests may leave an active search filter and may have uploaded
+    # files: clear the filter FIRST, let the unfiltered total settle, and only
+    # then capture the base every later wait is relative to.
+    page.fill("#gallery-query", "")
+    page.wait_for_function(
+        "() => { const d = window.WanGPStudioGallery.debug(); return d.fetching.length === 0 && d.pages > 0; }",
+        timeout=30000,
+    )
+    page.wait_for_timeout(500)
+    base = _total(page)
     total_height = page.evaluate("document.getElementById('gallery-viewport').scrollHeight")
     for cycle in range(4):
         _scroll_to(page, total_height)
         page.wait_for_timeout(400)
         _scroll_to(page, 0)
         page.wait_for_timeout(200)
-    base = _total(page)  # earlier tests may already have added files
     page.click("#gallery-refresh")  # full reset cycle
     page.wait_for_selector(".media-card:not(.skeleton)", timeout=20000)
     page.fill("#gallery-query", "prompt hint 3")
