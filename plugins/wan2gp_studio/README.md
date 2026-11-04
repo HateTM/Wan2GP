@@ -29,6 +29,7 @@ The web app is registered through WAN2GPPlugin.register_web_app() and is served 
 - Single-task submission through the native WanGP queue.
 - Job progress, status, completion, errors and cancellation through the existing API.
 - SSE progress stream with keep-alive comments and a bounded in-memory job history (maximum 50 queued/running Studio jobs).
+- Media Center discovery API: the four WanGP output roots, dedicated workspace folders and optional workflow outputs, with embedded metadata, World manifest summaries and thumbnails from the shared Deepy engine.
 
 The first frontend is deliberately a lightweight bootstrap. The visual node canvas is currently a single generation-node workspace; graph editing, workflow persistence, multi-node execution, media editors, a real gallery browser and RAM/VRAM telemetry are follow-up milestones. The queue panel shows Studio-submitted jobs, not every task submitted from the native WanGP UI.
 
@@ -43,6 +44,11 @@ The first frontend is deliberately a lightweight bootstrap. The visual node canv
 - GET /studio/api/jobs/{job_id}
 - GET /studio/api/jobs/{job_id}/events (SSE)
 - POST /studio/api/jobs/{job_id}/cancel
+- GET /studio/api/media?kind=&q=&sort=&limit=50&offset=0 (indexes the WanGP output roots)
+- GET /studio/api/media/roots (scan stats and the roots being indexed)
+- GET /studio/api/media/{media_id} (file facts and embedded metadata; Worlds add a manifest summary)
+- GET /studio/api/media/{media_id}/thumbnail (JPEG from the shared Deepy thumbnail engine)
+- DELETE /studio/api/media/{media_id}?confirm=true (removes the file and its .json sidecar)
 
 ## WanGP attribution
 

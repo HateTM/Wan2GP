@@ -16,6 +16,8 @@ from typing import Any
 
 from shared.utils.plugins import WAN2GPPlugin
 
+from .media_index import MediaIndex, thumbnail_bytes
+
 
 class _JobRecord:
     """Small, bounded in-memory view of a WanGP SessionJob."""
@@ -129,13 +131,14 @@ class WanGPStudioPlugin(WAN2GPPlugin):
     def __init__(self) -> None:
         super().__init__()
         self.name = "WanGP Studio"
-        self.version = "0.1.0"
+        self.version = "0.1.1"
         self.description = "Lightweight full-screen workspace for WanGP models, generation and workflows."
         self.type = ["app"]
         self._session = None
         self._session_lock = threading.Lock()
 
     def setup_ui(self) -> None:
+        self.request_global("server_config")
         self.register_web_app("/studio", self.create_web_app)
 
     def _get_session(self):
@@ -148,9 +151,45 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 self._session = self.deepy.web_session()
         return self._session
 
+    def _media_roots(self) -> list[str]:
+        """Output roots of the installed WanGP plus optional media folders."""
+        config = getattr(self, "server_config", None)
+        if not isinstance(config, dict):
+            config = {}
+            try:
+                config_path = Path(__file__).resolve().parents[2] / "wgp_config.json"
+                config = json.loads(config_path.read_text(encoding="utf-8"))
+            except Exception:
+                config = {}
+        roots = []
+        for key in ("save_path", "image_save_path", "audio_save_path", "mesh_save_path"):
+            value = config.get(key)
+            if isinstance(value, str) and value.strip():
+                roots.append(value)
+        repo = Path(__file__).resolve().parents[2]
+        workspaces = repo / "workspaces"
+        if workspaces.is_dir():
+            for record_path in sorted(workspaces.glob("*.json")):
+                try:
+                    record = json.loads(record_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if not isinstance(record, dict) or record.get("storage_mode") != "dedicated":
+                    continue
+                folder = record.get("folder")
+                if isinstance(folder, str) and folder.strip():
+                    folder_path = Path(folder)
+                    if not folder_path.is_absolute():
+                        folder_path = workspaces / folder_path
+                    roots.append(str(folder_path))
+        workflow_outputs = repo / "plugins" / "wan2gp-wanflow-ui" / "workflow_outputs"
+        if workflow_outputs.is_dir():
+            roots.append(str(workflow_outputs))
+        return roots
+
     def create_web_app(self):
         from fastapi import FastAPI, HTTPException, Request
-        from fastapi.responses import FileResponse, StreamingResponse
+        from fastapi.responses import FileResponse, Response, StreamingResponse
         from fastapi.staticfiles import StaticFiles
         from starlette.concurrency import run_in_threadpool
 
@@ -165,6 +204,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         )
         jobs: dict[str, _JobRecord] = {}
         jobs_lock = threading.Lock()
+        media_index = MediaIndex(self._media_roots)
 
         def session_or_503():
             try:
@@ -269,6 +309,64 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=f"Could not load model settings: {exc}") from exc
+
+        @app.get("/api/media")
+        def list_media(
+            kind: str | None = None,
+            q: str = "",
+            sort: str = "date_desc",
+            limit: int = 50,
+            offset: int = 0,
+        ):
+            media_index.refresh()
+            return media_index.query(kind=kind, q=q, sort=sort, limit=limit, offset=offset)
+
+        @app.get("/api/media/roots")
+        def media_roots():
+            media_index.refresh()
+            return media_index.stats()
+
+        @app.get("/api/media/{media_id}")
+        def media_detail(media_id: str):
+            media_index.refresh()
+            entry = media_index.get(media_id)
+            if entry is None:
+                raise HTTPException(status_code=404, detail="Media item not found.")
+            return media_index.detail(entry)
+
+        @app.get("/api/media/{media_id}/thumbnail")
+        def media_thumbnail(media_id: str):
+            media_index.refresh()
+            entry = media_index.get(media_id)
+            if entry is None:
+                raise HTTPException(status_code=404, detail="Media item not found.")
+            try:
+                data = thumbnail_bytes(entry["path"])
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail="Media file no longer exists.") from exc
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"Could not render thumbnail: {exc}") from exc
+            if not data:
+                raise HTTPException(status_code=404, detail="No thumbnail available for this item.")
+            return Response(
+                content=data,
+                media_type="image/jpeg",
+                headers={"Cache-Control": "private, max-age=120"},
+            )
+
+        @app.delete("/api/media/{media_id}")
+        def delete_media(media_id: str, confirm: bool = False):
+            media_index.refresh()
+            entry = media_index.get(media_id)
+            if entry is None:
+                raise HTTPException(status_code=404, detail="Media item not found.")
+            if not confirm:
+                raise HTTPException(status_code=400, detail="Deletion requires confirm=true.")
+            try:
+                media_index.delete(media_id)
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"Could not delete the media file: {exc}") from exc
+            return {"deleted": media_id, "name": entry["name"]}
 
         @app.get("/api/jobs")
         def list_jobs():
