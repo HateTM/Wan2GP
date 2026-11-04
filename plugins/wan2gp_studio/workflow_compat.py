@@ -317,6 +317,28 @@ class WorkflowCompat:
     def delete(self, slug: str) -> None:
         self._graph_store().delete(slug)
 
+    def save_block(self, graph: dict[str, Any], name: str | None = None) -> dict[str, Any]:
+        """Persist the selected group as a reusable block (same semantics as wanflow-ui)."""
+        blocks = self._module("block_store").BlockStore(self.plugin_dir / "blocks")
+        group_id = str((graph.get("ui") or {}).get("selected_group_id") or "")
+        if not group_id:
+            raise ValueError("Select a group before saving it as a reusable block.")
+        group = next((item for item in graph.get("groups") or [] if item.get("id") == group_id), None)
+        if not group:
+            raise ValueError("The selected group does not exist.")
+        path = blocks.save_group(graph, group_id, name or group.get("title"))
+        self._catalog = None
+        return {"id": path.stem, "name": str(name or group.get("title") or path.stem)}
+
+    def delete_block(self, block_id: str) -> dict[str, Any]:
+        blocks = self._module("block_store").BlockStore(self.plugin_dir / "blocks")
+        try:
+            path = blocks.delete(block_id)
+        except FileNotFoundError as exc:
+            raise KeyError(f"Reusable block not found: {block_id}") from exc
+        self._catalog = None
+        return {"id": path.stem}
+
     def node_types(self) -> set[str]:
         try:
             catalog = self.catalog()

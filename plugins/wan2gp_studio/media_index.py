@@ -176,6 +176,8 @@ class MediaIndex:
         self._extra_roots = tuple(extra_roots)
         self._min_refresh_interval = float(min_refresh_interval)
         self._lock = threading.RLock()
+        self._scan_lock = threading.Lock()
+        self._first_scan = threading.Event()
         self._entries: dict[str, dict[str, Any]] = {}
         self._fact_cache: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
         self._scanned_at = 0.0
@@ -198,44 +200,68 @@ class MediaIndex:
         return roots
 
     # -- scanning ------------------------------------------------------
-    def refresh(self, force: bool = False) -> dict[str, Any]:
+    def refresh(self, force: bool = False, wait: bool | None = None) -> dict[str, Any]:
+        """Schedule a rescan. The first scan and explicit ``wait=True`` block so
+        callers see data; every later rescan runs in a background thread and
+        gallery reads keep serving the previous index without blocking."""
         with self._lock:
             now = time.time()
-            if not force and now - self._scanned_at < self._min_refresh_interval:
-                return self.stats()
-            entries: dict[str, dict[str, Any]] = {}
-            for root in self.roots():
-                for dirpath, dirnames, filenames in os.walk(root):
-                    dirnames[:] = sorted(
-                        name for name in dirnames
-                        if not name.startswith(".") and name not in SKIPPED_DIRECTORIES
-                    )
-                    for name in filenames:
-                        kind = media_kind(name)
-                        if kind is None:
-                            continue
-                        path = os.path.join(dirpath, name)
-                        try:
-                            stat = os.stat(path)
-                        except OSError:
-                            continue
-                        entry_id = media_id_for(path)
-                        entries[entry_id] = {
-                            "id": entry_id,
-                            "path": path,
-                            "name": name,
-                            "relative": os.path.relpath(path, root).replace(os.sep, "/"),
-                            "root": root,
-                            "kind": kind,
-                            "size": int(stat.st_size),
-                            "mtime": float(stat.st_mtime),
-                            "mtime_ns": int(stat.st_mtime_ns),
-                        }
+            need_first = not self._first_scan.is_set()
+            stale = force or need_first or now - self._scanned_at >= self._min_refresh_interval
+        if not stale:
+            return self.stats()
+        if wait is None:
+            wait = need_first or force
+        if wait:
+            with self._scan_lock:
+                self._do_scan()
+            return self.stats()
+        if not self._scan_lock.acquire(blocking=False):
+            return self.stats()  # a rescan is already running; reads keep serving the current index
+        threading.Thread(target=self._scan_then_release, name="studio-media-scan", daemon=True).start()
+        return self.stats()
+
+    def _scan_then_release(self) -> None:
+        try:
+            self._do_scan()
+        finally:
+            self._scan_lock.release()
+
+    def _do_scan(self) -> None:
+        entries: dict[str, dict[str, Any]] = {}
+        for root in self.roots():
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = sorted(
+                    name for name in dirnames
+                    if not name.startswith(".") and name not in SKIPPED_DIRECTORIES
+                )
+                for name in filenames:
+                    kind = media_kind(name)
+                    if kind is None:
+                        continue
+                    path = os.path.join(dirpath, name)
+                    try:
+                        stat = os.stat(path)
+                    except OSError:
+                        continue
+                    entry_id = media_id_for(path)
+                    entries[entry_id] = {
+                        "id": entry_id,
+                        "path": path,
+                        "name": name,
+                        "relative": os.path.relpath(path, root).replace(os.sep, "/"),
+                        "root": root,
+                        "kind": kind,
+                        "size": int(stat.st_size),
+                        "mtime": float(stat.st_mtime),
+                        "mtime_ns": int(stat.st_mtime_ns),
+                    }
+        with self._lock:
             self._entries = entries
-            self._scanned_at = now
+            self._scanned_at = time.time()
             for stale in [key for key in self._fact_cache if key not in entries]:
                 self._fact_cache.pop(stale, None)
-            return self.stats()
+        self._first_scan.set()
 
     def stats(self) -> dict[str, Any]:
         kinds: dict[str, int] = {}
@@ -396,7 +422,10 @@ class MediaIndex:
                     os.remove(sidecar)
                 except OSError:
                     pass
-        self.refresh(force=True)
+        with self._lock:
+            self._entries.pop(media_id, None)
+            self._fact_cache.pop(media_id, None)
+        self.refresh(force=True, wait=False)
         return True
 
 

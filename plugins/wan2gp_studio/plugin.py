@@ -198,7 +198,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
     def __init__(self) -> None:
         super().__init__()
         self.name = "WanGP Studio"
-        self.version = "1.0.2"
+        self.version = "1.1.0"
         self.description = "Lightweight full-screen workspace for WanGP models, generation and workflows."
         self.type = ["app"]
         self._session = None
@@ -698,6 +698,30 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 raise HTTPException(status_code=422, detail={"message": str(exc), "report": exc.report}) from exc
             except WorkflowUnavailable as exc:
                 raise HTTPException(status_code=503, detail={"state": "unavailable", "message": str(exc)}) from exc
+
+        @app.post("/api/workflow/blocks")
+        async def workflow_save_block(request: Request):
+            workflow_gate()
+            payload = await request.json()
+            graph = payload.get("graph") if isinstance(payload, dict) else None
+            if not isinstance(graph, dict):
+                raise HTTPException(status_code=400, detail="Request must contain a graph object.")
+            try:
+                return workflow.save_block(graph, payload.get("name"))
+            except WorkflowUnavailable as exc:
+                raise HTTPException(status_code=503, detail={"state": "unavailable", "message": str(exc)}) from exc
+            except (ValueError, KeyError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        @app.delete("/api/workflow/blocks/{block_id}")
+        def workflow_delete_block(block_id: str):
+            workflow_gate()
+            try:
+                return workflow.delete_block(block_id)
+            except WorkflowUnavailable as exc:
+                raise HTTPException(status_code=503, detail={"state": "unavailable", "message": str(exc)}) from exc
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         @app.get("/api/workflow/workflows/{slug}")
         def workflow_get(slug: str):

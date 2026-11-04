@@ -82,6 +82,11 @@
     $("workflow-unavailable").hidden = true;
   }
 
+  async function rebuildWithCatalog(graph) {
+    state.catalog = await api("api/workflow/catalog");
+    await buildFrame(graph || state.graph || { name: "Untitled workflow", nodes: [], edges: [] });
+  }
+
   function postNodeStatus() {
     if (!state.frame || !state.frame.contentWindow) return;
     state.frame.contentWindow.postMessage({
@@ -325,8 +330,29 @@
       } else if (data.action === "run") {
         state.graph = data.graph || state.graph;
         startRun(state.graph);
-      } else if (data.action === "save_block" || data.action === "delete_block") {
-        toast("Reusable blocks are not wired in this build yet.", true);
+      } else if (data.action === "save_block") {
+        const graph = data.graph || state.graph || {};
+        const groupId = (graph.ui || {}).selected_group_id || "";
+        const group = (graph.groups || []).find((item) => item.id === groupId);
+        api("api/workflow/blocks", { method: "POST", body: JSON.stringify({ graph, name: group ? group.title : undefined }) })
+          .then((saved) => {
+            toast("Reusable block saved: " + (saved.name || saved.id));
+            state.graph = graph;
+            return rebuildWithCatalog(graph);
+          })
+          .catch((error) => toast(error.message, true));
+      } else if (data.action === "delete_block") {
+        const blockId = ((data.graph || {}).ui || {}).selected_block_id || "";
+        if (!blockId) {
+          toast("Select a reusable block first.", true);
+          return;
+        }
+        api("api/workflow/blocks/" + encodeURIComponent(blockId), { method: "DELETE" })
+          .then(() => {
+            toast("Reusable block deleted.");
+            return rebuildWithCatalog(state.graph);
+          })
+          .catch((error) => toast(error.message, true));
       }
     });
     setBusy(false);
