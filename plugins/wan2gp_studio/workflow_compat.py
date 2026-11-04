@@ -374,11 +374,17 @@ class WorkflowCompat:
         except InterruptedError as exc:
             record["status"] = "cancelled"
             record["message"] = "Cancelled"
+            for node_id, node_state in list(record["nodes"].items()):
+                if node_state == "running":
+                    record["nodes"][node_id] = "cancelled"
             self._emit(record, "complete", {"status": "cancelled", "outputs": []})
         except Exception as exc:  # noqa: BLE001 - any failure becomes a run error
             record["status"] = "failed"
             record["errors"].append(f"{type(exc).__name__}: {exc}")
             record["message"] = str(exc)
+            for node_id, node_state in list(record["nodes"].items()):
+                if node_state == "running":
+                    record["nodes"][node_id] = "error"
             self._emit(record, "error", {"message": str(exc)})
         finally:
             if callable(release):
