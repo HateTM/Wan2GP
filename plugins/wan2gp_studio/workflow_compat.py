@@ -26,6 +26,12 @@ logger = logging.getLogger("wangp.studio")
 
 PLUGIN_ID = "wan2gp-wanflow-ui"
 
+# Run bookkeeping limits (M7 hardening): never drop an active run,
+# keep a bounded terminal history with a TTL.
+MAX_ACTIVE_RUNS = 3
+MAX_TERMINAL_RUNS = 47
+TERMINAL_RUN_TTL_SECONDS = 2 * 3600
+
 
 class WorkflowUnavailable(RuntimeError):
     """Raised when the optional wanflow-ui plugin cannot serve the request."""
@@ -37,6 +43,10 @@ class WorkflowImportError(ValueError):
     def __init__(self, message: str, *, report: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.report = report or {}
+
+
+class WorkflowLimitError(RuntimeError):
+    """Raised when too many workflow runs are active at once."""
 
 
 def _model_defs(host: Any) -> dict[str, dict[str, Any]]:
@@ -514,6 +524,12 @@ class WorkflowCompat:
         validation = self.validate(normalized)
         if not validation["ok"]:
             raise ValueError("; ".join(validation["errors"]) or "Invalid workflow")
+        with self._lock:
+            active = sum(1 for record in self._runs.values() if record["status"] not in {"completed", "failed", "cancelled"})
+            if active >= MAX_ACTIVE_RUNS:
+                raise WorkflowLimitError(
+                    f"Too many active workflow runs ({active}/{MAX_ACTIVE_RUNS}). Cancel one first."
+                )
         run_id = uuid.uuid4().hex
         record = {
             "id": run_id,
@@ -654,11 +670,22 @@ class WorkflowCompat:
         return True
 
     def _prune_runs(self) -> None:
+        """Drop expired terminal runs, cap terminal history, never touch active runs."""
+        now = time.time()
         terminal = {"completed", "failed", "cancelled"}
-        while len(self._run_order) > 20:
-            oldest = self._run_order[0]
-            record = self._runs.get(oldest)
-            if record is not None and record["status"] not in terminal:
-                break
-            self._run_order.pop(0)
-            self._runs.pop(oldest, None)
+        active: list[str] = []
+        terminal_ids: list[str] = []
+        for run_id in self._run_order:
+            record = self._runs.get(run_id)
+            if record is None:
+                continue
+            if record["status"] in terminal:
+                if now - float(record.get("updated_at") or 0) <= TERMINAL_RUN_TTL_SECONDS:
+                    terminal_ids.append(run_id)
+                else:
+                    self._runs.pop(run_id, None)
+            else:
+                active.append(run_id)
+        terminal_ids = terminal_ids[-MAX_TERMINAL_RUNS:]
+        self._run_order = active + terminal_ids
+        self._runs = {run_id: self._runs[run_id] for run_id in self._run_order if run_id in self._runs}

@@ -18,6 +18,8 @@
 
 ## `422` on workflow import
 
+ComfyUI **API** JSON (`{"1": {"class_type": …}}`) imports as opaque `comfyui_node` nodes — preserved and exportable, but not executable in WanGP yet. ComfyUI **UI-format** JSON is rejected with `422` and `report.reason = "ui-format"`. Export the ComfyUI API (prompt) JSON instead.
+
 The payload was detected as ComfyUI JSON (`links` or `class_type` structure). ComfyUI import is not implemented yet; export the graph as `wan2gp-wanflow-ui` JSON instead. The response contains `{"report": {"format": "comfyui", "supported": false}}`.
 
 ## Workflow run fails immediately

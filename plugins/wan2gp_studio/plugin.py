@@ -25,7 +25,7 @@ from .media_index import (
     media_id_for,
     thumbnail_bytes,
 )
-from .workflow_compat import WorkflowCompat, WorkflowImportError, WorkflowUnavailable
+from .workflow_compat import WorkflowCompat, WorkflowImportError, WorkflowLimitError, WorkflowUnavailable
 from .telemetry import Telemetry
 
 
@@ -198,7 +198,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
     def __init__(self) -> None:
         super().__init__()
         self.name = "WanGP Studio"
-        self.version = "1.0.1"
+        self.version = "1.0.2"
         self.description = "Lightweight full-screen workspace for WanGP models, generation and workflows."
         self.type = ["app"]
         self._session = None
@@ -749,6 +749,8 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             workflow_gate()
             try:
                 return workflow.start_run(graph, inputs)
+            except WorkflowLimitError as exc:
+                raise HTTPException(status_code=429, detail={"state": "limit", "message": str(exc)}) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except WorkflowUnavailable as exc:
@@ -764,24 +766,28 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             return snapshot
 
         @app.get("/api/workflow/runs/{run_id}/events")
-        async def workflow_run_events(run_id: str):
+        async def workflow_run_events(run_id: str, request: Request):
             if workflow.snapshot(run_id) is None:
                 raise HTTPException(status_code=404, detail="Workflow run not found.")
+            try:
+                cursor = int(request.query_params.get("cursor") or request.headers.get("last-event-id") or 0)
+            except ValueError:
+                cursor = 0
 
             async def stream():
-                cursor = 0
+                position = max(0, cursor)
                 last_beat = time.monotonic()
                 while True:
-                    bundle = workflow.events_after(run_id, cursor)
+                    bundle = workflow.events_after(run_id, position)
                     if bundle is None:
-                        yield "event: end\r\ndata: {}\r\n\r\n"
+                        yield "event: end\ndata: {}\n\n"
                         return
                     events, latest = bundle
                     for event in events:
-                        cursor = event["id"]
-                        yield f"id: {cursor}\ndata: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+                        position = event["id"]
+                        yield f"id: {position}\ndata: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
                     snapshot = workflow.snapshot(run_id)
-                    if snapshot is None or (snapshot["status"] in {"completed", "failed", "cancelled"} and cursor >= latest):
+                    if snapshot is None or (snapshot["status"] in {"completed", "failed", "cancelled"} and position >= latest):
                         yield "event: end\ndata: {}\n\n"
                         return
                     if time.monotonic() - last_beat >= 15:

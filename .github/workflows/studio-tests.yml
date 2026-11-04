@@ -1,0 +1,26 @@
+name: Studio tests
+
+on:
+  push:
+    paths:
+      - "plugins/wan2gp_studio/**"
+      - ".github/workflows/studio-tests.yml"
+  pull_request:
+    paths:
+      - "plugins/wan2gp_studio/**"
+      - ".github/workflows/studio-tests.yml"
+
+jobs:
+  studio-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: >
+          pip install gradio GitPython tqdm requests fastapi httpx
+          pillow psutil pytest mutagen
+      - name: Run Studio tests
+        run: python -m pytest plugins/wan2gp_studio/tests -q

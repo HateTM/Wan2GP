@@ -184,18 +184,14 @@
 
   function watchRun(runId) {
     if (state.events) {
-      state.events.close();
+      state.events.closed = true;
+      if (state.events.timer) clearTimeout(state.events.timer);
       state.events = null;
     }
-    const source = new EventSource("api/workflow/runs/" + encodeURIComponent(runId) + "/events", { withCredentials: true });
-    state.events = source;
-    source.onmessage = (event) => {
-      let message;
-      try {
-        message = JSON.parse(event.data);
-      } catch (_) {
-        return;
-      }
+    const session = { runId, lastId: 0, attempts: 0, closed: false, timer: null };
+    state.events = session;
+
+    const applyMessage = (message) => {
       if (message.kind === "node" && message.data) {
         state.nodeStates[message.data.node_id] = message.data.state;
         postNodeStatus();
@@ -213,14 +209,81 @@
         setStatus("Workflow failed");
       }
     };
-    const finish = () => {
-      source.close();
-      state.events = null;
-      state.runId = null;
-      setBusy(false);
+
+    const reconcile = async () => {
+      try {
+        const snapshot = await api("api/workflow/runs/" + encodeURIComponent(runId));
+        if (snapshot && snapshot.nodes) {
+          state.nodeStates = Object.assign({}, snapshot.nodes);
+          postNodeStatus();
+          if (snapshot.status && snapshot.status !== "running") {
+            setStatus(snapshot.status === "completed"
+              ? "Completed · " + (snapshot.outputs || []).length + " output(s)"
+              : snapshot.status.charAt(0).toUpperCase() + snapshot.status.slice(1));
+          }
+        }
+      } catch (_) {}
     };
-    source.addEventListener("end", finish);
-    source.onerror = finish;
+
+    const finish = () => {
+      session.closed = true;
+      if (session.timer) clearTimeout(session.timer);
+      if (state.events === session) {
+        state.events = null;
+        state.runId = null;
+        setBusy(false);
+      }
+    };
+
+    const connect = () => {
+      if (session.closed || state.runId !== runId) {
+        finish();
+        return;
+      }
+      const source = new EventSource(
+        "api/workflow/runs/" + encodeURIComponent(runId) + "/events?cursor=" + session.lastId,
+        { withCredentials: true }
+      );
+      source.onopen = () => {
+        session.attempts = 0;
+      };
+      source.onmessage = (event) => {
+        let message;
+        try {
+          message = JSON.parse(event.data);
+        } catch (_) {
+          return;
+        }
+        if (typeof message.id === "number") {
+          session.lastId = Math.max(session.lastId, message.id);
+        }
+        applyMessage(message);
+        if (message.kind === "closed") {
+          session.closed = true;
+          source.close();
+          finish();
+        }
+      };
+      source.addEventListener("end", () => {
+        session.closed = true;
+        source.close();
+        finish();
+      });
+      source.onerror = () => {
+        source.close();
+        if (session.closed || state.runId !== runId) {
+          finish();
+          return;
+        }
+        session.attempts += 1;
+        const delay = Math.min(15000, 1000 * Math.pow(2, Math.min(session.attempts, 4)));
+        setStatus("Reconnecting… attempt " + session.attempts);
+        reconcile();
+        session.timer = setTimeout(connect, delay);
+      };
+    };
+
+    connect();
   }
 
   async function cancelRun() {

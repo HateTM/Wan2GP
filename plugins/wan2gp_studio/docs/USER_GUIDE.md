@@ -52,7 +52,7 @@ Deep links: `#dashboard`, `#workflow`, `#gallery`, `#resources`, `#settings`.
 - **Save** stores the graph as `wan2gp-wanflow-ui` JSON in the plugin's `workflows/` folder; the selector at the top lists saved and shipped examples.
 - **Run** submits the graph to the native queue through Studio's facade; node states update over SSE; **Cancel** requests cancellation at the next node check.
 - Execution requires the optional `wan2gp-wanflow-ui` plugin. Without it the view shows `not_installed` and everything else keeps working.
-- Import/export: `GET /studio/api/workflow/workflows/{id}/export` and `POST /studio/api/workflow/import`. Legacy `wan2gp-workflows-v2` (`stages`) files are migrated automatically with a warning. ComfyUI JSON is detected and rejected with a clear report — no third format is introduced.
+- Import/export: `GET /studio/api/workflow/workflows/{id}/export` and `POST /studio/api/workflow/import`. Legacy `wan2gp-workflows-v2` (`stages`) files are migrated automatically with a warning. ComfyUI **API** graphs are imported as opaque `comfyui_node` nodes (preserved, not executable) and can be exported back in ComfyUI API format; ComfyUI **UI-format** JSON is rejected with `422` and a reason.
 
 ## Resources
 
