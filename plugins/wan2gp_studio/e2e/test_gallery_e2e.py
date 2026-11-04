@@ -49,7 +49,8 @@ def test_deep_scroll_keeps_window_and_dom_bounded(page):
     assert debug["domCards"] == debug["cards"]
     # the far end actually rendered: page count and deepest file name
     assert page.locator("#gallery-window .media-card:not(.skeleton)").count() > 0
-    assert page.locator("text=e2e-02799_").count() >= 0  # corpus naming sanity
+    # the far end of a date_desc grid holds the OLDEST corpus file
+    page.wait_for_selector("text=e2e-00000_seed0_prompt hint 0 batch.png", timeout=15000)
 
 
 def test_scroll_back_refetches_evicted_pages(page):
@@ -142,3 +143,11 @@ def test_long_session_soak(page, tmp_path_factory):
     assert debug["pages"] <= 13, debug
     assert debug["cards"] <= 120, debug
     assert debug["domCards"] == debug["cards"]
+
+
+def test_empty_upload_panel_is_hidden(page):
+    """Live acceptance found the empty uploads panel visible: the panel's
+    display:grid overrode the hidden attribute. This pins the fix."""
+    panel = page.locator("#gallery-uploads")
+    assert panel.count() == 1
+    assert not panel.is_visible()

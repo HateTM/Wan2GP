@@ -20,6 +20,8 @@
 
   const state = {
     pages: new Map(),
+    // in-flight markers are generation-scoped tokens ("gen:page"), so a
+    // stale request's finally cannot un-mark the current request
     fetching: new Set(),
     generation: 0,
     total: 0,
@@ -120,9 +122,10 @@
 
   async function loadPage(page) {
     if (page < 0 || (state.total && page * PAGE >= state.total)) return;
-    if (state.pages.has(page) || state.fetching.has(page)) return;
     const generation = state.generation;
-    state.fetching.add(page);
+    const token = generation + ":" + page;
+    if (state.pages.has(page) || state.fetching.has(token)) return;
+    state.fetching.add(token);
     renderEmpty();
     try {
       const params = new URLSearchParams({ limit: PAGE, offset: page * PAGE, sort: state.sort });
@@ -142,7 +145,7 @@
       $("gallery-summary").textContent = "Media API unavailable";
       renderEmpty();
     } finally {
-      state.fetching.delete(page);
+      state.fetching.delete(token);
     }
   }
 
@@ -629,7 +632,7 @@
     const list = Array.from(files || []);
     if (!list.length) return;
     for (const file of list) {
-      uploadState.queue.push({ file, status: "queued", percent: 0, error: null, xhr: null, id: Math.random().toString(36).slice(2) });
+      uploadState.queue.push({ file, name: file.name, status: "queued", percent: 0, error: null, xhr: null, id: Math.random().toString(36).slice(2) });
     }
     renderUploadRows();
     pumpUploads();
@@ -648,7 +651,7 @@
           ? '<button class="upload-action" data-act="remove" title="Remove from list">✕</button>'
           : '<button class="upload-action" data-act="retry" title="Retry upload">↻</button><button class="upload-action" data-act="remove" title="Remove from list">✕</button>';
     return (
-      '<div class="upload-line"><span class="upload-name" title="' + esc(entry.file.name) + '">' + esc(entry.file.name) + "</span>" +
+      '<div class="upload-line"><span class="upload-name" title="' + esc(entry.name) + '">' + esc(entry.name) + "</span>" +
       '<span class="upload-meter"><span class="upload-fill" style="width:' + (entry.status === "done" ? 100 : entry.percent) + '%"></span></span>' +
       '<span class="upload-status ' + entry.status + '">' + esc(state_label) + (entry.error ? " · " + esc(entry.error) : "") + "</span>" + actions + "</div>"
     );
@@ -696,6 +699,18 @@
     renderUploadRows(); // keep the counters in the panel header honest
   }
 
+  const MAX_FINISHED_UPLOADS = 100;
+
+  function trimUploadHistory() {
+    // Bounded history: terminal entries beyond the cap leave the queue (and
+    // the DOM). Failed/cancelled entries stay retryable, so only "done" rows
+    // are trimmed, oldest first.
+    const finished = uploadState.queue.filter((item) => item.status === "done");
+    if (finished.length <= MAX_FINISHED_UPLOADS) return;
+    const drop = new Set(finished.slice(0, finished.length - MAX_FINISHED_UPLOADS).map((item) => item.id));
+    uploadState.queue = uploadState.queue.filter((item) => !drop.has(item.id));
+  }
+
   function pumpUploads() {
     while (uploadState.running < UPLOAD_CONCURRENCY) {
       const entry = uploadState.queue.find((item) => item.status === "queued");
@@ -741,8 +756,10 @@
     } else {
       entry.status = "done";
       entry.percent = 100;
+      entry.file = null; // success is terminal: release the file handle
       uploadState.done += 1;
     }
+    trimUploadHistory();
     updateUploadRow(entry);
     pumpUploads(); // a slot just freed: start the next queued file
     const pending = uploadState.queue.some((item) => item.status === "queued" || item.status === "uploading");

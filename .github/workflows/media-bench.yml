@@ -1,0 +1,24 @@
+name: Media benchmark
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 1" # weekly, Mondays 04:00 UTC
+
+jobs:
+  media-bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        # The perf tests exercise MediaIndex only: no torch or the preview
+        # chain is needed here.
+        run: pip install "pillow==11.3.0" "psutil==7.2.2" "pytest==9.1.1"
+      - name: Run the 10k benchmarks
+        env:
+          STUDIO_MEDIA_BENCH: "1"
+        run: python -m pytest plugins/wan2gp_studio/tests/test_media_index_perf.py -q -s
