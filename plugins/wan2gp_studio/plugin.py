@@ -5,6 +5,8 @@ The plugin deliberately does not call shared.api.init(): Deepy's web_session()
 binds this plugin to the already-running WanGP WebUI queue and runtime.
 """
 import asyncio
+import copy
+import importlib
 import json
 import os
 import threading
@@ -195,6 +197,9 @@ class _JobRecord:
         self.id = job_id
         self.model_type = model_type
         self.prompt = prompt[:240]
+        #: Original submission payload (deep copy) for "repeat with the same
+        #: settings"; None on records created before it existed.
+        self.settings = None
         self.status = "submitting"
         self.progress = 0
         self.phase = "queued"
@@ -255,6 +260,7 @@ class _JobRecord:
                 "updated_at": self.updated_at,
                 "generated_files": list(self.generated_files),
                 "errors": list(self.errors),
+                "settings": copy.deepcopy(self.settings),
             }
 
     def events_after(self, event_id: int) -> tuple[list[dict[str, Any]], int]:
@@ -504,6 +510,16 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         jobs: dict[str, _JobRecord] = {}
         jobs_lock = threading.Lock()
         media_index = MediaIndex(self._media_roots)
+        # Warm the shared thumbnail engine outside the request path: its cold
+        # import chain takes ~20 s, and the first gallery view fires two dozen
+        # thumbnail requests at once - without the warm-up they would all sit
+        # on the import lock and occupy every threadpool thread.
+        threading.Thread(
+            target=importlib.import_module,
+            args=("shared.deepy.thumbnails",),
+            name="studio-thumbnail-warmup",
+            daemon=True,
+        ).start()
         from .plugin_health import PluginHealthService, host_wan2gp_version
 
         plugin_health = PluginHealthService(
@@ -1122,49 +1138,70 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             records.sort(key=lambda item: item.created_at, reverse=True)
             return [record.snapshot() for record in records[:50]]
 
-        @app.post("/api/jobs")
-        async def submit_job(request: Request):
-            payload = await request.json()
-            settings = payload.get("settings") if isinstance(payload, dict) else None
-            if not isinstance(settings, dict):
-                raise HTTPException(status_code=400, detail="Request must contain a settings object.")
+        async def _start_job(settings: dict) -> dict[str, Any]:
+            """Validate and submit one settings payload; shared by submit and
+            repeat-with-the-same-settings."""
             model_type = str(settings.get("model_type") or "").strip()
             if not model_type:
                 raise HTTPException(status_code=400, detail="settings.model_type is required.")
 
             session = session_or_503()
-            try:
-                model_def = await run_in_threadpool(session.get_model_def, model_type)
-                if model_def is None:
-                    raise HTTPException(status_code=400, detail=f"Unknown model_type: {model_type}")
-                prompt = str(settings.get("prompt") or "")
-                job_id = uuid.uuid4().hex
-                record = _JobRecord(job_id, model_type, prompt)
-                with jobs_lock:
-                    terminal = {"completed", "failed", "cancelled"}
-                    finished = [
-                        key for key, value in sorted(jobs.items(), key=lambda pair: pair[1].created_at)
-                        if value.snapshot()["status"] in terminal
-                    ]
-                    for key in finished[: max(0, len(jobs) - 49)]:
-                        jobs.pop(key, None)
-                    active_count = sum(
-                        value.snapshot()["status"] not in terminal
-                        for value in jobs.values()
-                    )
-                    if active_count >= 50:
-                        raise HTTPException(status_code=429, detail="WanGP Studio already has 50 queued or running jobs.")
-                    jobs[job_id] = record
+            model_def = await run_in_threadpool(session.get_model_def, model_type)
+            if model_def is None:
+                raise HTTPException(status_code=400, detail=f"Unknown model_type: {model_type}")
+            prompt = str(settings.get("prompt") or "")
+            job_id = uuid.uuid4().hex
+            record = _JobRecord(job_id, model_type, prompt)
+            record.settings = copy.deepcopy(settings)
+            with jobs_lock:
+                terminal = {"completed", "failed", "cancelled"}
+                finished = [
+                    key for key, value in sorted(jobs.items(), key=lambda pair: pair[1].created_at)
+                    if value.snapshot()["status"] in terminal
+                ]
+                for key in finished[: max(0, len(jobs) - 49)]:
+                    jobs.pop(key, None)
+                active_count = sum(
+                    value.snapshot()["status"] not in terminal
+                    for value in jobs.values()
+                )
+                if active_count >= 50:
+                    raise HTTPException(status_code=429, detail="WanGP Studio already has 50 queued or running jobs.")
+                jobs[job_id] = record
 
-                record.status = "queued"
-                record.message = "Waiting in WanGP queue"
-                record.emit("queued", {"job_id": job_id, "model_type": model_type})
+            record.status = "queued"
+            record.message = "Waiting in WanGP queue"
+            record.emit("queued", {"job_id": job_id, "model_type": model_type})
+            try:
+                job = await run_in_threadpool(
+                    session.submit_task,
+                    settings,
+                    callbacks=_StudioCallbacks(record),
+                )
+            except Exception as exc:
+                with record._lock:
+                    record.status = "failed"
+                    record.errors.append(str(exc))
+                    record.message = str(exc)
+                    record.updated_at = time.time()
+                record.emit("error", {"message": str(exc)})
+                raise
+            with record._lock:
+                record.session_job = job
+
+            def collect_result():
                 try:
-                    job = await run_in_threadpool(
-                        session.submit_task,
-                        settings,
-                        callbacks=_StudioCallbacks(record),
-                    )
+                    result = job.result()
+                    with record._lock:
+                        record.generated_files = list(result.generated_files or [])
+                        record.errors.extend(str(error) for error in (result.errors or []))
+                        record.errors = _dedupe_messages(record.errors)
+                        record.status = "completed" if result.success else ("cancelled" if result.cancelled else "failed")
+                        record.progress = 100 if result.success else record.progress
+                        record.phase = record.status
+                        record.message = record.status.capitalize()
+                        record.updated_at = time.time()
+                    record.emit("complete", record.snapshot())
                 except Exception as exc:
                     with record._lock:
                         record.status = "failed"
@@ -1172,48 +1209,38 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                         record.message = str(exc)
                         record.updated_at = time.time()
                     record.emit("error", {"message": str(exc)})
-                    raise
-                with record._lock:
-                    record.session_job = job
+                finally:
+                    # SessionJob may retain GenerationResult artifacts (including large tensors).
+                    # Drop the handle once completion has been reduced to lightweight metadata.
+                    with record._lock:
+                        record.session_job = None
+                    record.emit("closed", {"job_id": job_id})
 
-                def collect_result():
-                    try:
-                        result = job.result()
-                        with record._lock:
-                            record.generated_files = list(result.generated_files or [])
-                            record.errors.extend(str(error) for error in (result.errors or []))
-                            record.errors = _dedupe_messages(record.errors)
-                            record.status = "completed" if result.success else ("cancelled" if result.cancelled else "failed")
-                            record.progress = 100 if result.success else record.progress
-                            record.phase = record.status
-                            record.message = record.status.capitalize()
-                            record.updated_at = time.time()
-                        record.emit("complete", record.snapshot())
-                    except Exception as exc:
-                        with record._lock:
-                            record.status = "failed"
-                            record.errors.append(str(exc))
-                            record.message = str(exc)
-                            record.updated_at = time.time()
-                        record.emit("error", {"message": str(exc)})
-                    finally:
-                        # SessionJob may retain GenerationResult artifacts (including large tensors).
-                        # Drop the handle once completion has been reduced to lightweight metadata.
-                        with record._lock:
-                            record.session_job = None
-                        record.emit("closed", {"job_id": job_id})
+            threading.Thread(
+                target=collect_result,
+                name=f"WanGP-Studio-{job_id[:8]}",
+                daemon=True,
+            ).start()
+            return {"job_id": job_id, "status": record.status}
 
-                threading.Thread(
-                    target=collect_result,
-                    name=f"WanGP-Studio-{job_id[:8]}",
-                    daemon=True,
-                ).start()
-                return {"job_id": job_id, "status": record.status}
-            except HTTPException:
-                raise
-            except Exception as exc:
-                raise HTTPException(status_code=500, detail=f"WanGP rejected the job: {exc}") from exc
+        @app.post("/api/jobs")
+        async def submit_job(request: Request):
+            payload = await request.json()
+            settings = payload.get("settings") if isinstance(payload, dict) else None
+            if not isinstance(settings, dict):
+                raise HTTPException(status_code=400, detail="Request must contain a settings object.")
+            return await _start_job(settings)
 
+        @app.post("/api/jobs/{job_id}/repeat")
+        async def repeat_job(job_id: str):
+            with jobs_lock:
+                record = jobs.get(str(job_id))
+            if record is None:
+                raise HTTPException(status_code=404, detail="Unknown job.")
+            stored = getattr(record, "settings", None)
+            if not isinstance(stored, dict):
+                raise HTTPException(status_code=409, detail="This job has no stored settings to repeat.")
+            return await _start_job(copy.deepcopy(stored))
         @app.post("/api/jobs/{job_id}/cancel")
         def cancel_job(job_id: str):
             with jobs_lock:

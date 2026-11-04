@@ -284,12 +284,15 @@
       const status = String(job.status || "queued");
       const cls = status === "completed" || status === "failed" ? " " + status : "";
       const cancel = status === "completed" || status === "failed" || status === "cancelled" ? "" : '<button class="cancel-job" data-cancel="' + esc(job.id) + '">Cancel</button>';
+      // Generation History: a finished job can be repeated with its original settings
+      const repeat = status === "completed" || status === "failed" ? '<button class="cancel-job" data-repeat="' + esc(job.id) + '">Repeat</button>' : "";
       return '<article class="queue-card"><div class="queue-card-top"><span class="queue-card-title">' + esc(job.model_type) +
         '</span><span class="queue-state' + cls + '">' + esc(status) + '</span></div><div class="queue-card-message">' +
         esc(job.message || job.prompt || "") + '</div><div class="queue-progress"><span style="width:' +
-        Math.max(0, Math.min(100, Number(job.progress) || 0)) + '%"></span></div>' + cancel + '</article>';
+        Math.max(0, Math.min(100, Number(job.progress) || 0)) + '%"></span></div>' + repeat + cancel + '</article>';
     }).join("");
     $("queue-list").querySelectorAll("[data-cancel]").forEach((button) => button.addEventListener("click", () => cancelJob(button.dataset.cancel)));
+    $("queue-list").querySelectorAll("[data-repeat]").forEach((button) => button.addEventListener("click", () => repeatJob(button.dataset.repeat)));
   }
 
   async function refreshJobs() {
@@ -299,6 +302,15 @@
       records.forEach((record) => state.jobs.set(record.id, record));
       renderJobs();
     } catch (_) {}
+  }
+
+  async function repeatJob(jobId) {
+    try {
+      await api("api/jobs/" + encodeURIComponent(jobId) + "/repeat", { method: "POST" });
+    } catch (error) {
+      toast(error.message, true);
+    }
+    await refreshJobs();
   }
 
   async function cancelJob(jobId) {
