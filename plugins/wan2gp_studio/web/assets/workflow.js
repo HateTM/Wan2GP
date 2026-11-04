@@ -303,5 +303,5 @@
     newWorkflow,
     getState: () => ({ slug: state.slug, runId: state.runId, graph: state.graph })
   };
-  if (location.hash !== "#gallery") S.setView("workflow");
+  if (location.hash !== "#gallery" && location.hash !== "#resources") S.setView("workflow");
 })();

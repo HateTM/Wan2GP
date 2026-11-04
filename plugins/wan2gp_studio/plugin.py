@@ -27,6 +27,7 @@ from .media_index import (
     thumbnail_bytes,
 )
 from .workflow_compat import WorkflowCompat, WorkflowUnavailable
+from .telemetry import Telemetry
 
 
 MEDIA_UPLOAD_MAX_BYTES = 512 * 1024 * 1024
@@ -187,7 +188,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
     def __init__(self) -> None:
         super().__init__()
         self.name = "WanGP Studio"
-        self.version = "0.3.0"
+        self.version = "0.4.0"
         self.description = "Lightweight full-screen workspace for WanGP models, generation and workflows."
         self.type = ["app"]
         self._session = None
@@ -506,6 +507,10 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             )
 
         workflow = WorkflowCompat(self, plugins_root=os.environ.get("STUDIO_PLUGINS_ROOT") or None)
+        telemetry = Telemetry(
+            jobs_provider=lambda: [record.snapshot() for record in list(jobs.values())],
+            workflow_provider=lambda: workflow.recent_runs(),
+        )
 
         def workflow_gate():
             if not workflow.available():
@@ -553,6 +558,13 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 "core": {"version": getattr(self, "wan2gp_version", None) or "unknown", "runtime": "WanGP WebUI"},
                 "plugins": entries,
             }
+
+        @app.get("/api/telemetry")
+        def telemetry_snapshot():
+            try:
+                return telemetry.snapshot()
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"Telemetry unavailable: {exc}") from exc
 
         @app.get("/api/workflow/status")
         def workflow_status():

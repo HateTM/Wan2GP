@@ -310,15 +310,20 @@
 
   function setView(view) {
     const gallery = view === "gallery";
+    const resources = view === "resources";
     state.view = view;
     document.body.classList.toggle("gallery-mode", gallery);
+    document.body.classList.toggle("resources-mode", resources);
     $("gallery-view").hidden = !gallery;
+    $("resource-view").hidden = !resources;
     $("nav-gallery").classList.toggle("active", gallery);
-    $("nav-workflow").classList.toggle("active", !gallery);
-    $("breadcrumb-current").textContent = gallery ? "Gallery" : "Workflow";
-    try { history.replaceState(null, "", gallery ? "#gallery" : "#workflow"); } catch (_) {}
+    $("nav-resources").classList.toggle("active", resources);
+    $("nav-workflow").classList.toggle("active", !gallery && !resources);
+    $("breadcrumb-current").textContent = gallery ? "Gallery" : (resources ? "Resources" : "Workflow");
+    try { history.replaceState(null, "", gallery ? "#gallery" : (resources ? "#resources" : "#workflow")); } catch (_) {}
     if (gallery && window.WanGPStudioGallery) window.WanGPStudioGallery.activate();
-    if (!gallery && window.WanGPStudioCanvas) window.WanGPStudioCanvas.activate();
+    if (resources && window.WanGPStudioTelemetry) window.WanGPStudioTelemetry.activate();
+    if (!gallery && !resources && window.WanGPStudioCanvas) window.WanGPStudioCanvas.activate();
   }
 
   function bindEvents() {
@@ -377,6 +382,7 @@
     $("zoom-out") && $("zoom-out").addEventListener("click", () => updateZoom(-10));
     $("nav-workflow").addEventListener("click", () => setView("workflow"));
     $("nav-gallery").addEventListener("click", () => setView("gallery"));
+    $("nav-resources").addEventListener("click", () => setView("resources"));
     $("nav-models").addEventListener("click", () => $("model-search").focus());
     document.addEventListener("keydown", (event) => {
       if (event.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) {
