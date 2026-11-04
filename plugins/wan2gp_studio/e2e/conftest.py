@@ -14,7 +14,6 @@ Everything here skips when playwright or its browser is not installed; the
 live WanGP host (Gradio bridge) - those belong to the manual production
 acceptance pass, not to this harness.
 """
-import importlib
 import os
 import socket
 import sys
@@ -65,12 +64,12 @@ def server_url(tmp_path_factory):
         "audio_save_path": str(root / "audio"),
     }
     app = plugin.create_web_app()
-    # The Studio app warms the thumbnail engine in a background thread, but
-    # this harness opens the gallery within seconds - before that import
-    # (about 20 s cold) finishes, its import lock would stall the first
-    # thumbnail volley and starve the browser's connection pool. Warm it
-    # synchronously so the tests exercise steady state.
-    importlib.import_module("shared.deepy.thumbnails")
+    # The harness tests gallery bounds, not preview rendering. The shared
+    # thumbnail engine's import chain pulls heavy optional deps (rembg,
+    # whisper, ...) the runner does not carry; stubbing the module makes every
+    # thumbnail request fail fast and deterministically (the cards show their
+    # broken-image state) instead of stalling the import lock mid-suite.
+    sys.modules["shared.deepy.thumbnails"] = None
     config = uvicorn.Config(app, host="127.0.0.1", port=_free_port(), log_level="warning")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
