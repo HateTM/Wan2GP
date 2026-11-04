@@ -46,6 +46,7 @@ jobs:
             "imageio" \
             "imageio-ffmpeg" \
             "soundfile" \
+            "rembg==2.0.65" \
             "uvicorn" \
             "playwright==1.49.1"
       - name: Install Chromium
