@@ -79,7 +79,7 @@ Run the suites with the repo venv:
 
 - `env_uv/Scripts/python.exe -m pytest plugins/wan2gp_studio/tests -q`
 - `env_uv/Scripts/python.exe -m pytest plugins/plugin_manager/tests -q` (version-compare and update fork-guard regressions for `shared/utils/plugins.py`)
-- `env_uv/Scripts/python.exe -m pytest plugins/wan2gp-wanflow-ui/tests -q` (the vendored WanFlow UI fork against current WanGP)
+- `env_uv/Scripts/python.exe -m pytest plugins/wan2gp-wanflow-ui/tests -q` (the vendored WanFlow UI fork against current WanGP). CI runs the CPU-safe subset (39 tests): the graph-runner modules import mmgp, which asserts a CUDA-enabled torch, so `tests/conftest.py` skips them there; a GPU workstation runs the full suite and remains the acceptance gate.
 
 - The core CI job installs pinned test dependencies, including `diffusers==0.36.0` — `shared.utils` imports it at package init, so a missing diffusers fails at collection.
 - Tests that need the optional WanFlow UI plugin skip when it is absent. The `studio-integration` job clones the plugin from the repository variables `WANFLOW_UI_REPO` (git URL) and `WANFLOW_UI_REF` (default `main`), sets `WANFLOW_UI_REQUIRED=1`, and then a missing WanFlow import fails the run instead of silently skipping. Set both variables under Settings → Secrets and variables → Actions → Variables to enable it.
