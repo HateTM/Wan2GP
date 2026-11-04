@@ -21,6 +21,36 @@
     status: "Workflow canvas"
   };
 
+  // Graph requests are answered by the canvas iframe (see web/assets/canvas.js).
+  // Save/Run from the Studio toolbar must never write the cached state.graph:
+  // the iframe owns the live graph and only pushes it on its own toolbar actions.
+  const pendingGraphRequests = new Map();
+
+  function frameOriginAllowed(origin) {
+    // sandbox="allow-scripts" without allow-same-origin gives the srcdoc frame an
+    // opaque origin, reported as "null"; location.origin keeps the check working
+    // if the sandbox is ever relaxed.
+    return origin === "null" || origin === location.origin;
+  }
+
+  function requestCanvasGraph(timeoutMs = 4000) {
+    const frameWindow = state.frame && state.frame.contentWindow;
+    if (!frameWindow) return Promise.resolve(null);
+    const requestId = "graph-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        pendingGraphRequests.delete(requestId);
+        resolve(null);
+      }, timeoutMs);
+      pendingGraphRequests.set(requestId, (graph) => {
+        clearTimeout(timer);
+        pendingGraphRequests.delete(requestId);
+        resolve(graph);
+      });
+      frameWindow.postMessage({ type: "WAN2GP_WORKFLOWS_V2", action: "get_graph", request_id: requestId }, "*");
+    });
+  }
+
   function b64(text) {
     const bytes = new TextEncoder().encode(text);
     let binary = "";
@@ -306,26 +336,49 @@
       if (event.target.value) loadWorkflow(event.target.value);
     });
     $("workflow-new").addEventListener("click", newWorkflow);
-    $("workflow-save").addEventListener("click", () => {
+    $("workflow-save").addEventListener("click", async () => {
       if (!state.graph) {
         toast("Nothing to save yet.", true);
         return;
       }
-      saveGraph(state.graph, (state.graph && state.graph.name) || "Untitled workflow").catch(() => {});
+      const graph = await requestCanvasGraph();
+      if (!graph) {
+        toast("Could not read the current graph from the canvas. Save aborted.", true);
+        setStatus("Save aborted");
+        return;
+      }
+      state.graph = graph;
+      saveGraph(graph, (graph && graph.name) || "Untitled workflow").catch(() => {});
     });
-    $("workflow-run").addEventListener("click", () => {
+    $("workflow-run").addEventListener("click", async () => {
       if (!state.graph) {
         toast("Open or create a workflow first.", true);
         return;
       }
-      startRun(state.graph);
+      const graph = await requestCanvasGraph();
+      if (!graph) {
+        toast("Could not read the current graph from the canvas. Run aborted.", true);
+        setStatus("Run aborted");
+        return;
+      }
+      state.graph = graph;
+      startRun(graph);
     });
     $("workflow-cancel").addEventListener("click", cancelRun);
     window.addEventListener("message", (event) => {
       const data = event && event.data;
       if (!data || data.type !== "WAN2GP_WORKFLOWS_V2") return;
+      if (!frameOriginAllowed(event.origin)) return;
       const frameWindow = state.frame && state.frame.contentWindow;
       if (!frameWindow || event.source !== frameWindow) return;  // canvas iframe only
+      if (data.action === "graph") {
+        const resolve = typeof data.request_id === "string" ? pendingGraphRequests.get(data.request_id) : null;
+        if (!resolve) return;
+        if (typeof data.graph !== "object" || data.graph === null) return;
+        state.graph = data.graph;
+        resolve(data.graph);
+        return;
+      }
       const allowed = ["save", "run", "save_block", "delete_block"];
       if (allowed.indexOf(data.action) === -1) return;
       if (data.graph !== undefined && (typeof data.graph !== "object" || data.graph === null)) return;

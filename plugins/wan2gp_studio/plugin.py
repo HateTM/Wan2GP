@@ -566,8 +566,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 if os.path.exists(temp_path):
                     await run_in_threadpool(os.remove, temp_path)
                 raise HTTPException(status_code=500, detail=f"Could not store the uploaded file: {exc}") from exc
-            media_index.refresh(force=True)
-            entry = media_index.get(media_id_for(destination))
+            entry = media_index.index_file(destination)
             if entry is None:
                 raise HTTPException(status_code=500, detail="Uploaded file was not indexed.")
             return {"item": media_index.card(entry)}

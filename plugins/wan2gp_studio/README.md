@@ -62,6 +62,15 @@ The first frontend is deliberately a lightweight bootstrap. The visual node canv
 
 `web/assets/canvas.{html,css,js}` are the WanFlow UI editor assets (Apache-2.0, © Javier) vendored unchanged to serve the Studio workflow canvas through `register_web_app`; the license text is kept in `web/assets/WANFLOW-LICENSE.txt`. The Studio-side host (`web/assets/workflow.js`) replaces WanFlow's Gradio hidden-button bridge with the `/studio/api/workflow/*` facade.
 
+The vendored `canvas.js` carries one documented Studio patch: it answers host `get_graph` requests with the current graph (`WAN2GP_WORKFLOWS_V2` `graph` reply) and ignores messages that do not come from `window.parent`. Re-vendoring a newer WanFlow release must re-apply this patch (see `tests/test_frontend_static.py`).
+
+## Testing
+
+Run the suite with the repo venv: `env_uv/Scripts/python.exe -m pytest plugins/wan2gp_studio/tests -q`.
+
+- The core CI job installs pinned test dependencies, including `diffusers==0.36.0` — `shared.utils` imports it at package init, so a missing diffusers fails at collection.
+- Tests that need the optional WanFlow UI plugin skip when it is absent. The `studio-integration` job clones the plugin from the repository variables `WANFLOW_UI_REPO` (git URL) and `WANFLOW_UI_REF` (default `main`), sets `WANFLOW_UI_REQUIRED=1`, and then a missing WanFlow import fails the run instead of silently skipping. Set both variables under Settings → Secrets and variables → Actions → Variables to enable it.
+
 ## Documentation
 
 - [User guide](docs/USER_GUIDE.md) — install/upgrade, views, gallery, workflow, resources.

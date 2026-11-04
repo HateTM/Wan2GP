@@ -73,6 +73,23 @@ def test_catalog_shape_documented_in_workflow_host():
         assert token in host, f"workflow.js must reference {token}"
 
 
+def test_studio_toolbar_requests_live_graph_from_canvas():
+    host = _read(os.path.join(ASSETS, "workflow.js"))
+    canvas = _read(os.path.join(ASSETS, "canvas.js"))
+    assert "requestCanvasGraph" in host
+    assert 'action: "get_graph"' in host
+    assert "data.action==='get_graph'" in canvas
+    assert "action:'graph'" in canvas
+
+
+def test_canvas_messages_are_origin_checked():
+    host = _read(os.path.join(ASSETS, "workflow.js"))
+    canvas = _read(os.path.join(ASSETS, "canvas.js"))
+    assert "frameOriginAllowed" in host
+    assert "event.origin" in host
+    assert "event.source!==window.parent" in canvas
+
+
 def test_version_strings_are_consistent():
     info = json.loads(_read(os.path.join(PLUGIN_DIR, "plugin_info.json")))
     html = _read(HTML)

@@ -493,7 +493,6 @@ class WorkflowCompat:
                 "flags": copy.deepcopy(spec.get("flags") or {}),
                 "order": spec.get("order"),
                 "size": copy.deepcopy(spec.get("size")),
-                "ui_meta": copy.deepcopy(ui_meta),
             }
             nodes.append({
                 "id": "c" + key,
@@ -514,7 +513,15 @@ class WorkflowCompat:
                 "target": {"node": "c" + str(tgt), "port": "in" + str(tgt_slot)},
                 "type": ltype,
             })
-        graph = {"name": str(name or "ComfyUI UI import"), "nodes": nodes, "edges": edges, "groups": []}
+        graph = {
+            "name": str(name or "ComfyUI UI import"),
+            "nodes": nodes,
+            "edges": edges,
+            "groups": [],
+            # ComfyUI canvas metadata belongs to the whole workflow, not to every
+            # node: duplicating it per node multiplied large link/group payloads.
+            "ui": {"comfyui_ui": copy.deepcopy(ui_meta)},
+        }
         normalized = model.normalize_graph(graph)
         normalized["name"] = str(name or "ComfyUI UI import")
         known = self.node_types()
@@ -534,31 +541,108 @@ class WorkflowCompat:
         }
 
     def _export_comfyui_ui(self, graph: dict[str, Any]) -> dict[str, Any]:
-        comfy_nodes: list[tuple[dict[str, Any], dict[str, Any]]] = []
-        ui_meta = None
+        """Export an editable graph back to ComfyUI UI format.
+
+        Nodes keep their current Studio position, while ``links``,
+        ``inputs[].link`` and ``outputs[].links`` are rebuilt from
+        ``graph.edges`` so deleting or re-wiring nodes cannot leave dangling
+        references. Canvas metadata (groups/config/extra) lives on the graph
+        (``graph.ui.comfyui_ui``); older workflows that still carry a per-node
+        ``ui_meta`` copy are read as a fallback.
+        """
+        graph_ui = graph.get("ui") if isinstance(graph.get("ui"), dict) else {}
+        graph_ui_meta = graph_ui.get("comfyui_ui") if isinstance(graph_ui.get("comfyui_ui"), dict) else None
+        comfy_nodes: list[tuple[dict[str, Any], dict[str, Any], int]] = []
+        legacy_ui_meta: dict[str, Any] | None = None
         for node in graph.get("nodes") or []:
             params = node.get("params") if isinstance(node.get("params"), dict) else {}
             comfy = params.get("comfyui")
-            if isinstance(comfy, dict) and comfy.get("format") == "ui":
-                comfy_nodes.append((node, comfy))
-                if ui_meta is None and isinstance(comfy.get("ui_meta"), dict):
-                    ui_meta = comfy["ui_meta"]
+            if not (isinstance(comfy, dict) and comfy.get("format") == "ui"):
+                continue
+            try:
+                key = int(comfy.get("key"))
+            except (TypeError, ValueError):
+                continue
+            comfy_nodes.append((node, comfy, key))
+            if legacy_ui_meta is None and isinstance(comfy.get("ui_meta"), dict):
+                legacy_ui_meta = comfy["ui_meta"]
         if not comfy_nodes:
             raise WorkflowImportError(
                 "Workflow has no ComfyUI UI nodes to export.",
                 report={"format": "comfyui-ui", "nodes": 0},
             )
-        ui_meta = ui_meta or {}
-        node_specs: list[dict[str, Any]] = []
-        last_node_id = int(ui_meta.get("last_node_id") or 0)
-        for node, comfy in comfy_nodes:
+        ui_meta = graph_ui_meta or legacy_ui_meta or {}
+        node_key = {str(node.get("id")): key for node, _, key in comfy_nodes}
+        by_key = {key: comfy for _, comfy, key in comfy_nodes}
+
+        def slot_index(port: Any) -> int | None:
+            text = str(port or "").strip()
+            for prefix in ("out", "in"):
+                if text.startswith(prefix):
+                    text = text[len(prefix):]
+                    break
             try:
-                key = int(comfy.get("key"))
+                value = int(text)
+            except (TypeError, ValueError):
+                return None
+            return value if value >= 0 else None
+
+        def slot_count(comfy: dict[str, Any], field: str) -> int:
+            items = comfy.get(field)
+            return len(items) if isinstance(items, list) else 0
+
+        original_links = [link for link in (ui_meta.get("links") or []) if isinstance(link, list) and len(link) >= 5]
+        original_by_connection: dict[tuple[int, int, int, int, str], int] = {}
+        try:
+            next_link_id = int(ui_meta.get("last_link_id") or 0)
+        except (TypeError, ValueError):
+            next_link_id = 0
+        for link in original_links:
+            try:
+                link_id = int(link[0])
+                signature = (
+                    int(link[1]), int(link[2]), int(link[3]), int(link[4]),
+                    "" if len(link) < 6 or link[5] is None else str(link[5]),
+                )
             except (TypeError, ValueError):
                 continue
+            next_link_id = max(next_link_id, link_id)
+            original_by_connection.setdefault(signature, link_id)
+
+        links: list[list[Any]] = []
+        incoming: dict[tuple[int, int], int] = {}
+        outgoing: dict[tuple[int, int], list[int]] = {}
+        used_link_ids: set[int] = set()
+        for edge in graph.get("edges") or []:
+            if not isinstance(edge, dict):
+                continue
+            source = edge.get("source") if isinstance(edge.get("source"), dict) else {}
+            target = edge.get("target") if isinstance(edge.get("target"), dict) else {}
+            source_key = node_key.get(str(source.get("node") or ""))
+            target_key = node_key.get(str(target.get("node") or ""))
+            source_slot = slot_index(source.get("port"))
+            target_slot = slot_index(target.get("port"))
+            if source_key is None or target_key is None or source_slot is None or target_slot is None:
+                continue
+            if source_slot >= slot_count(by_key[source_key], "outputs"):
+                continue
+            if target_slot >= slot_count(by_key[target_key], "inputs"):
+                continue
+            link_type = "" if edge.get("type") is None else str(edge.get("type"))
+            link_id = original_by_connection.get((source_key, source_slot, target_key, target_slot, link_type))
+            if link_id is None or link_id in used_link_ids:
+                next_link_id += 1
+                link_id = next_link_id
+            used_link_ids.add(link_id)
+            links.append([link_id, source_key, source_slot, target_key, target_slot, link_type])
+            incoming[(target_key, target_slot)] = link_id
+            outgoing.setdefault((source_key, source_slot), []).append(link_id)
+
+        node_specs: list[dict[str, Any]] = []
+        last_node_id = int(ui_meta.get("last_node_id") or 0)
+        for node, comfy, key in comfy_nodes:
             last_node_id = max(last_node_id, key)
             position = node.get("position") or {}
-            pos = [position.get("x", 0), position.get("y", 0)] if isinstance(position, dict) else list(position)
             spec = {
                 "id": key,
                 "type": comfy.get("class_type"),
@@ -575,20 +659,22 @@ class WorkflowCompat:
             }
             if comfy.get("size") is not None:
                 spec["size"] = copy.deepcopy(comfy["size"])
+            if isinstance(spec["inputs"], list):
+                for index, item in enumerate(spec["inputs"]):
+                    if isinstance(item, dict):
+                        item["link"] = incoming.get((key, index))
+            if isinstance(spec["outputs"], list):
+                for index, item in enumerate(spec["outputs"]):
+                    if isinstance(item, dict):
+                        item["links"] = list(outgoing.get((key, index), []))
             node_specs.append(spec)
-        last_link_id = int(ui_meta.get("last_link_id") or 0)
-        for link in ui_meta.get("links") or []:
-            if isinstance(link, list) and link:
-                try:
-                    last_link_id = max(last_link_id, int(link[0]))
-                except (TypeError, ValueError):
-                    pass
+
         return {
             "format": "comfyui-ui",
             "last_node_id": last_node_id,
-            "last_link_id": last_link_id,
+            "last_link_id": next_link_id,
             "nodes": node_specs,
-            "links": copy.deepcopy(ui_meta.get("links") or []),
+            "links": links,
             "groups": copy.deepcopy(ui_meta.get("groups") or []),
             "config": copy.deepcopy(ui_meta.get("config") or {}),
             "extra": copy.deepcopy(ui_meta.get("extra") or {}),

@@ -19,9 +19,58 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install CPU torch (shared.utils imports it at package init)
-        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+        run: pip install "torch==2.10.0" --index-url https://download.pytorch.org/whl/cpu
       - name: Install test dependencies
         run: |
-          pip install "gradio==5.29.0" GitPython tqdm requests fastapi httpx pillow psutil pytest mutagen
+          pip install \
+            "diffusers==0.36.0" \
+            "gradio==5.29.0" \
+            "GitPython==3.1.45" \
+            "tqdm==4.70.1" \
+            "requests==2.34.2" \
+            "fastapi==0.142.2" \
+            "httpx==0.28.1" \
+            "pillow==11.3.0" \
+            "psutil==7.2.2" \
+            "pytest==9.1.1" \
+            "mutagen==1.48.1"
       - name: Run Studio tests
+        run: python -m pytest plugins/wan2gp_studio/tests -q
+
+  # Optional integration job: WanFlow UI is not vendored into this repository,
+  # so the source repository and ref must be provided as repository variables
+  # (Settings -> Secrets and variables -> Actions -> Variables):
+  #   WANFLOW_UI_REPO  e.g. https://github.com/<owner>/wan2gp-wanflow-ui
+  #   WANFLOW_UI_REF   branch or tag; defaults to main
+  # When WANFLOW_UI_REPO is unset the job is skipped. With WANFLOW_UI_REQUIRED=1
+  # a missing WanFlow import fails the run instead of silently skipping tests.
+  studio-integration:
+    if: ${{ vars.WANFLOW_UI_REPO != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install CPU torch (shared.utils imports it at package init)
+        run: pip install "torch==2.10.0" --index-url https://download.pytorch.org/whl/cpu
+      - name: Install test dependencies
+        run: |
+          pip install \
+            "diffusers==0.36.0" \
+            "gradio==5.29.0" \
+            "GitPython==3.1.45" \
+            "tqdm==4.70.1" \
+            "requests==2.34.2" \
+            "fastapi==0.142.2" \
+            "httpx==0.28.1" \
+            "pillow==11.3.0" \
+            "psutil==7.2.2" \
+            "pytest==9.1.1" \
+            "mutagen==1.48.1"
+      - name: Install WanFlow UI
+        run: git clone --depth 1 --branch "${{ vars.WANFLOW_UI_REF || 'main' }}" "${{ vars.WANFLOW_UI_REPO }}" plugins/wan2gp-wanflow-ui
+      - name: Run Studio tests against real WanFlow
+        env:
+          WANFLOW_UI_REQUIRED: "1"
         run: python -m pytest plugins/wan2gp_studio/tests -q

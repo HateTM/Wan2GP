@@ -252,7 +252,8 @@ def test_comfyui_ui_export_round_trip(tmp_path):
 
 
 def test_comfyui_ui_export_survives_edits(tmp_path):
-    """Import → Move node → Delete node → Save → Export: layout edit wins, links/groups survive."""
+    """Import → Move node → Delete node → Save → Export: layout edit wins and
+    links are rebuilt from the live graph, so nothing dangles."""
     if GRAPH_MODEL is None:
         pytest.skip("wanflow-ui not installed")
     compat = _compat(tmp_path)
@@ -271,9 +272,61 @@ def test_comfyui_ui_export_survives_edits(tmp_path):
     assert [spec["id"] for spec in exported["nodes"]] == [2]
     sampler = exported["nodes"][0]
     assert sampler["pos"] == [650, 240]
-    assert sampler["inputs"][0]["link"] == 1
-    assert exported["links"] == _ui_payload()["links"]  # ui_meta carrier keeps the original links
+    assert sampler["inputs"][0]["link"] is None
+    assert exported["links"] == []
+    assert exported["last_link_id"] == 1  # never shrinks below the original ids
     assert exported["version"] == 0.4
+
+
+def test_comfyui_ui_export_rebuilds_links_from_edges(tmp_path):
+    """An unchanged connection keeps its link id; re-wiring allocates a new one."""
+    if GRAPH_MODEL is None:
+        pytest.skip("wanflow-ui not installed")
+    compat = _compat(tmp_path)
+    imported = compat.import_workflow(_ui_payload())
+
+    graph = compat.load(imported["id"])
+    compat.save(graph, imported["name"])
+    exported = compat.export_workflow(imported["id"], fmt="comfyui-ui")
+    assert exported["links"] == [[1, 1, 0, 2, 0, "MODEL"]]
+
+    graph = compat.load(imported["id"])
+    graph["edges"][0]["type"] = "CONDITIONING"
+    compat.save(graph, imported["name"])
+    exported = compat.export_workflow(imported["id"], fmt="comfyui-ui")
+    assert exported["links"] == [[2, 1, 0, 2, 0, "CONDITIONING"]]
+    by_id = {node["id"]: node for node in exported["nodes"]}
+    assert by_id[1]["outputs"][0]["links"] == [2]
+    assert by_id[2]["inputs"][0]["link"] == 2
+    assert exported["last_link_id"] == 2
+
+
+def test_comfyui_ui_metadata_lives_on_the_graph(tmp_path):
+    """Canvas metadata is stored once per workflow, not copied into every node."""
+    if GRAPH_MODEL is None:
+        pytest.skip("wanflow-ui not installed")
+    compat = _compat(tmp_path)
+    imported = compat.import_workflow(_ui_payload())
+    graph = compat.load(imported["id"])
+    assert graph["ui"]["comfyui_ui"]["links"] == _ui_payload()["links"]
+    for node in graph["nodes"]:
+        assert "ui_meta" not in node["params"].get("comfyui", {})
+
+
+def test_comfyui_ui_export_reads_legacy_per_node_metadata(tmp_path):
+    """Workflows saved before the ui_meta move still export with their links."""
+    if GRAPH_MODEL is None:
+        pytest.skip("wanflow-ui not installed")
+    compat = _compat(tmp_path)
+    imported = compat.import_workflow(_ui_payload())
+    graph = compat.load(imported["id"])
+    ui_meta = graph["ui"].pop("comfyui_ui")
+    for node in graph["nodes"]:
+        node["params"]["comfyui"]["ui_meta"] = ui_meta
+    compat.save(graph, imported["name"])
+    exported = compat.export_workflow(imported["id"], fmt="comfyui-ui")
+    assert exported["links"] == [[1, 1, 0, 2, 0, "MODEL"]]
+    assert exported["nodes"][1]["inputs"][0]["link"] == 1
 
 
 def test_save_block_and_delete_block_api(tmp_path):

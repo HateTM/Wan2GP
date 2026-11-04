@@ -176,6 +176,30 @@ def test_delete_requires_known_id_and_respects_roots(index, media_root):
     assert index.stats()["total"] == 4
 
 
+def test_index_file_adds_one_entry_without_rescan(index, media_root):
+    before = index.stats()["total"]
+    path = media_root / "single.png"
+    _make_png(path)
+    entry = index.index_file(str(path))
+    assert entry and entry["kind"] == "image"
+    assert index.stats()["total"] == before + 1
+    assert index.index_file(str(media_root / "notes.txt")) is None
+    assert index.index_file(str(media_root / "missing.png")) is None
+
+
+def test_symlink_escape_is_rejected(index, media_root, tmp_path):
+    outside = tmp_path / "outside.png"
+    _make_png(outside)
+    link = media_root / "escape.png"
+    try:
+        os.symlink(outside, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available on this platform")
+    assert index._inside_roots(str(link)) is False
+    assert index.index_file(str(link)) is None
+    assert index.delete(media_id_for(str(link))) is False
+
+
 def test_thumbnail_bytes_use_shared_engine(index):
     pytest.importorskip("shared.deepy.thumbnails")
     from wan2gp_studio.media_index import thumbnail_bytes

@@ -263,6 +263,41 @@ class MediaIndex:
                 self._fact_cache.pop(stale, None)
         self._first_scan.set()
 
+    def index_file(self, path: str) -> dict[str, Any] | None:
+        """Index one file without walking every media root.
+
+        Upload handlers call this instead of a blocking ``refresh(force=True)``
+        so a single new file never stalls the request on a full rescan. Returns
+        ``None`` when the path is outside the roots or is not a media file.
+        """
+        path = os.path.abspath(os.path.expanduser(path))
+        root = self._matching_root(path)
+        if root is None:
+            return None
+        kind = media_kind(os.path.basename(path))
+        if kind is None:
+            return None
+        try:
+            stat = os.stat(path)
+        except OSError:
+            return None
+        entry_id = media_id_for(path)
+        entry = {
+            "id": entry_id,
+            "path": path,
+            "name": os.path.basename(path),
+            "relative": os.path.relpath(path, root).replace(os.sep, "/"),
+            "root": root,
+            "kind": kind,
+            "size": int(stat.st_size),
+            "mtime": float(stat.st_mtime),
+            "mtime_ns": int(stat.st_mtime_ns),
+        }
+        with self._lock:
+            self._entries[entry_id] = entry
+            self._fact_cache.pop(entry_id, None)
+        return entry
+
     def stats(self) -> dict[str, Any]:
         kinds: dict[str, int] = {}
         for entry in self._entries.values():
@@ -399,13 +434,18 @@ class MediaIndex:
         return payload
 
     # -- actions -------------------------------------------------------
-    def _inside_roots(self, path: str) -> bool:
-        normalized = os.path.normcase(os.path.abspath(path))
+    def _matching_root(self, path: str) -> str | None:
+        # realpath resolves symlinks/junctions, otherwise a link inside a media
+        # root could serve (or delete) a file that lives outside of it.
+        normalized = os.path.normcase(os.path.realpath(os.path.abspath(os.path.expanduser(path))))
         for root in self.roots():
-            root = os.path.normcase(os.path.abspath(root))
-            if normalized == root or normalized.startswith(root + os.sep):
-                return True
-        return False
+            base = os.path.normcase(os.path.realpath(os.path.abspath(os.path.expanduser(root))))
+            if normalized == base or normalized.startswith(base + os.sep):
+                return root
+        return None
+
+    def _inside_roots(self, path: str) -> bool:
+        return self._matching_root(path) is not None
 
     def delete(self, media_id: str, *, remove_sidecar: bool = True) -> bool:
         entry = self.get(media_id)
