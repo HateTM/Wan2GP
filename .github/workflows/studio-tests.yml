@@ -18,9 +18,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install CPU torch (shared.utils imports it at package init)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Install test dependencies
-        run: >
-          pip install gradio GitPython tqdm requests fastapi httpx
-          pillow psutil pytest mutagen
+        run: |
+          pip install "gradio==5.29.0" GitPython tqdm requests fastapi httpx pillow psutil pytest mutagen
       - name: Run Studio tests
         run: python -m pytest plugins/wan2gp_studio/tests -q

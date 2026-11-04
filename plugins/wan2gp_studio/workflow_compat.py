@@ -464,7 +464,15 @@ class WorkflowCompat:
     def _import_comfyui_ui(self, payload: dict[str, Any], name: str | None) -> dict[str, Any]:
         """Import ComfyUI UI-format JSON: layout, values and links are preserved as opaque nodes."""
         model = self._module("graph_model")
-        raw_links = payload.get("links") if isinstance(payload.get("links"), list) else []
+        raw_links = copy.deepcopy(payload.get("links")) if isinstance(payload.get("links"), list) else []
+        ui_meta = {
+            "links": raw_links,
+            "groups": copy.deepcopy(payload.get("groups") or []),
+            "config": copy.deepcopy(payload.get("config") or {}),
+            "extra": copy.deepcopy(payload.get("extra") or {}),
+            "last_node_id": payload.get("last_node_id"),
+            "last_link_id": payload.get("last_link_id"),
+        }
         nodes: list[dict[str, Any]] = []
         edges: list[dict[str, Any]] = []
         for spec in payload.get("nodes") or []:
@@ -482,6 +490,10 @@ class WorkflowCompat:
                 "inputs": copy.deepcopy(spec.get("inputs") or []),
                 "outputs": copy.deepcopy(spec.get("outputs") or []),
                 "pos": list(pos),
+                "flags": copy.deepcopy(spec.get("flags") or {}),
+                "order": spec.get("order"),
+                "size": copy.deepcopy(spec.get("size")),
+                "ui_meta": copy.deepcopy(ui_meta),
             }
             nodes.append({
                 "id": "c" + key,
@@ -502,8 +514,6 @@ class WorkflowCompat:
                 "target": {"node": "c" + str(tgt), "port": "in" + str(tgt_slot)},
                 "type": ltype,
             })
-        if nodes and raw_links:
-            nodes[0].setdefault("params", {}).setdefault("comfyui", {})["ui_links"] = copy.deepcopy(raw_links)
         graph = {"name": str(name or "ComfyUI UI import"), "nodes": nodes, "edges": edges, "groups": []}
         normalized = model.normalize_graph(graph)
         normalized["name"] = str(name or "ComfyUI UI import")
@@ -525,42 +535,49 @@ class WorkflowCompat:
 
     def _export_comfyui_ui(self, graph: dict[str, Any]) -> dict[str, Any]:
         comfy_nodes: list[tuple[dict[str, Any], dict[str, Any]]] = []
-        ui_links = None
+        ui_meta = None
         for node in graph.get("nodes") or []:
             params = node.get("params") if isinstance(node.get("params"), dict) else {}
             comfy = params.get("comfyui")
             if isinstance(comfy, dict) and comfy.get("format") == "ui":
                 comfy_nodes.append((node, comfy))
-                if ui_links is None and isinstance(comfy.get("ui_links"), list):
-                    ui_links = comfy["ui_links"]
+                if ui_meta is None and isinstance(comfy.get("ui_meta"), dict):
+                    ui_meta = comfy["ui_meta"]
         if not comfy_nodes:
             raise WorkflowImportError(
                 "Workflow has no ComfyUI UI nodes to export.",
                 report={"format": "comfyui-ui", "nodes": 0},
             )
+        ui_meta = ui_meta or {}
         node_specs: list[dict[str, Any]] = []
-        last_node_id = 0
+        last_node_id = int(ui_meta.get("last_node_id") or 0)
         for node, comfy in comfy_nodes:
             try:
                 key = int(comfy.get("key"))
             except (TypeError, ValueError):
                 continue
             last_node_id = max(last_node_id, key)
-            node_specs.append({
+            position = node.get("position") or {}
+            pos = [position.get("x", 0), position.get("y", 0)] if isinstance(position, dict) else list(position)
+            spec = {
                 "id": key,
                 "type": comfy.get("class_type"),
                 "title": node.get("title"),
                 "mode": comfy.get("mode") if comfy.get("mode") is not None else 0,
-                "pos": list(comfy.get("pos") or [0, 0]),
+                "pos": [float(position.get("x", 0)) if isinstance(position, dict) else 0,
+                        float(position.get("y", 0)) if isinstance(position, dict) else 0],
                 "properties": copy.deepcopy(comfy.get("properties") or {}),
                 "widgets_values": copy.deepcopy(comfy.get("widgets_values")),
                 "inputs": copy.deepcopy(comfy.get("inputs") or []),
                 "outputs": copy.deepcopy(comfy.get("outputs") or []),
-                "order": 0,
-                "flags": {},
-            })
-        last_link_id = 0
-        for link in ui_links or []:
+                "order": comfy.get("order") if comfy.get("order") is not None else 0,
+                "flags": copy.deepcopy(comfy.get("flags") or {}),
+            }
+            if comfy.get("size") is not None:
+                spec["size"] = copy.deepcopy(comfy["size"])
+            node_specs.append(spec)
+        last_link_id = int(ui_meta.get("last_link_id") or 0)
+        for link in ui_meta.get("links") or []:
             if isinstance(link, list) and link:
                 try:
                     last_link_id = max(last_link_id, int(link[0]))
@@ -571,10 +588,10 @@ class WorkflowCompat:
             "last_node_id": last_node_id,
             "last_link_id": last_link_id,
             "nodes": node_specs,
-            "links": copy.deepcopy(ui_links or []),
-            "groups": [],
-            "config": {},
-            "extra": {},
+            "links": copy.deepcopy(ui_meta.get("links") or []),
+            "groups": copy.deepcopy(ui_meta.get("groups") or []),
+            "config": copy.deepcopy(ui_meta.get("config") or {}),
+            "extra": copy.deepcopy(ui_meta.get("extra") or {}),
             "version": 0.4,
         }
 

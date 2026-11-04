@@ -324,6 +324,11 @@
     window.addEventListener("message", (event) => {
       const data = event && event.data;
       if (!data || data.type !== "WAN2GP_WORKFLOWS_V2") return;
+      const frameWindow = state.frame && state.frame.contentWindow;
+      if (!frameWindow || event.source !== frameWindow) return;  // canvas iframe only
+      const allowed = ["save", "run", "save_block", "delete_block"];
+      if (allowed.indexOf(data.action) === -1) return;
+      if (data.graph !== undefined && (typeof data.graph !== "object" || data.graph === null)) return;
       if (data.action === "save") {
         state.graph = data.graph || state.graph;
         saveGraph(state.graph, (data.graph && data.graph.name) || "Untitled workflow").catch(() => {});
@@ -342,7 +347,8 @@
           })
           .catch((error) => toast(error.message, true));
       } else if (data.action === "delete_block") {
-        const blockId = ((data.graph || {}).ui || {}).selected_block_id || "";
+        const graph = data.graph || state.graph || {};
+        const blockId = (graph.ui || {}).selected_block_id || "";
         if (!blockId) {
           toast("Select a reusable block first.", true);
           return;
@@ -350,7 +356,8 @@
         api("api/workflow/blocks/" + encodeURIComponent(blockId), { method: "DELETE" })
           .then(() => {
             toast("Reusable block deleted.");
-            return rebuildWithCatalog(state.graph);
+            state.graph = graph;
+            return rebuildWithCatalog(graph);
           })
           .catch((error) => toast(error.message, true));
       }

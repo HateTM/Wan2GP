@@ -294,6 +294,14 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             redoc_url=None,
             openapi_url=None,
         )
+        @app.middleware("http")
+        async def studio_security_headers(request: Request, call_next):
+            response = await call_next(request)
+            response.headers["X-Frame-Options"] = "DENY"
+            if "content-security-policy" not in {key.lower() for key in response.headers}:
+                response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+            return response
+
         jobs: dict[str, _JobRecord] = {}
         jobs_lock = threading.Lock()
         media_index = MediaIndex(self._media_roots)
@@ -682,9 +690,10 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 raise HTTPException(status_code=404, detail=f"Workflow not found: {slug}") from None
             except WorkflowImportError as exc:
                 raise HTTPException(status_code=400, detail={"message": str(exc), "report": exc.report}) from exc
+            suffix = "comfyui" if str(format).lower().startswith("comfyui") else "wanflow"
             return JSONResponse(
                 payload,
-                headers={"Content-Disposition": f'attachment; filename="{slug}.wanflow.json"'},
+                headers={"Content-Disposition": f'attachment; filename="{slug}.{suffix}.json"'},
             )
 
         @app.post("/api/workflow/import")

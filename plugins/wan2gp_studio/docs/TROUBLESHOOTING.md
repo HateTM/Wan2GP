@@ -20,7 +20,7 @@
 
 Import accepts: `wan2gp-wanflow-ui` JSON (including legacy v1 `stages` migration), ComfyUI **API** graphs and ComfyUI **UI-format** graphs — the last two as opaque `comfyui_node` nodes (layout, values, links preserved; exportable via `fmt=comfyui` / `fmt=comfyui-ui`; not executable in WanGP). `422` means the JSON could not be mapped at all — see `detail.message` and `detail.report`.
 
-The payload was detected as ComfyUI JSON (`links` or `class_type` structure). ComfyUI import is not implemented yet; export the graph as `wan2gp-wanflow-ui` JSON instead. The response contains `{"report": {"format": "comfyui", "supported": false}}`.
+The payload was detected as ComfyUI JSON, but neither its API (prompt) map nor its UI-format graph could be mapped. ComfyUI **API** graphs and **UI-format** graphs are supported as opaque `comfyui_node` imports (preserved and exportable via `?format=comfyui` / `?format=comfyui-ui`), so `422` here means the structure matched neither shape — see `detail.message` and `detail.report`.
 
 ## Workflow run fails immediately
 

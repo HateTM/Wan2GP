@@ -20,7 +20,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 from wan2gp_studio.plugin import WanGPStudioPlugin  # noqa: E402
 from wan2gp_studio.workflow_compat import WorkflowCompat  # noqa: E402
 
-GRAPH_MODEL = importlib.import_module("wan2gp-wanflow-ui.graph_model")
+GRAPH_MODEL = None
+try:
+    GRAPH_MODEL = importlib.import_module("wan2gp-wanflow-ui.graph_model")
+except Exception:  # optional plugin is absent in clean checkouts / CI
+    GRAPH_MODEL = None
 
 
 class StubGraphStore:
@@ -85,6 +89,8 @@ def _compat(tmp_path):
 
 
 def test_round_trip_export_import(tmp_path):
+    if GRAPH_MODEL is None:
+        pytest.skip("wanflow-ui not installed")
     compat = _compat(tmp_path)
     graph = {"name": "Round Trip", "nodes": [{"id": "n1", "type": "text_prompt", "params": {"text": "hi"}, "enabled": True}], "edges": []}
     saved = compat.save(graph, "Round Trip")
@@ -101,6 +107,8 @@ def test_round_trip_export_import(tmp_path):
 
 
 def test_legacy_v1_stage_workflow_is_migrated(tmp_path):
+    if GRAPH_MODEL is None:
+        pytest.skip("wanflow-ui not installed")
     compat = _compat(tmp_path)
     legacy = {
         "name": "Legacy Flow",
@@ -123,6 +131,8 @@ def test_legacy_v1_stage_workflow_is_migrated(tmp_path):
 
 
 def test_unknown_nodes_are_preserved_and_reported(tmp_path):
+    if GRAPH_MODEL is None:
+        pytest.skip("wanflow-ui not installed")
     compat = _compat(tmp_path)
     graph = {"name": "Unknown", "nodes": [{"id": "u1", "type": "mystery_node", "params": {"x": 1}, "enabled": True}], "edges": []}
     imported = compat.import_workflow(graph)
@@ -132,6 +142,8 @@ def test_unknown_nodes_are_preserved_and_reported(tmp_path):
 
 
 def test_comfyui_payload_imports_as_opaque(tmp_path):
+    if GRAPH_MODEL is None:
+        pytest.skip("wanflow-ui not installed")
     compat = _compat(tmp_path)
     imported = compat.import_workflow({
         "1": {"class_type": "KSampler", "inputs": {"seed": 1, "model": ["5", 0]}},
@@ -184,6 +196,8 @@ def _ui_payload():
 
 
 def test_comfyui_ui_import_preserves_layout_and_values(tmp_path):
+    if GRAPH_MODEL is None:
+        pytest.skip("wanflow-ui not installed")
     compat = _compat(tmp_path)
     imported = compat.import_workflow(_ui_payload())
     assert imported["id"] == "comfyui-ui-import"
@@ -198,6 +212,8 @@ def test_comfyui_ui_import_preserves_layout_and_values(tmp_path):
 
 
 def test_comfyui_ui_export_round_trip(tmp_path):
+    if GRAPH_MODEL is None:
+        pytest.skip("wanflow-ui not installed")
     compat = _compat(tmp_path)
     imported = compat.import_workflow(_ui_payload())
     exported = compat.export_workflow(imported["id"], fmt="comfyui-ui")
@@ -207,6 +223,31 @@ def test_comfyui_ui_export_round_trip(tmp_path):
     assert by_id[1]["widgets_values"] == ["model.safetensors"]
     assert by_id[2]["inputs"][0]["link"] == 1
     assert by_id[2]["pos"] == [400, 100]
+
+
+def test_comfyui_ui_export_survives_edits(tmp_path):
+    """Import → Move node → Delete node → Save → Export: layout edit wins, links/groups survive."""
+    if GRAPH_MODEL is None:
+        pytest.skip("wanflow-ui not installed")
+    compat = _compat(tmp_path)
+    imported = compat.import_workflow(_ui_payload())
+    graph = compat.load(imported["id"])
+
+    # move the sampler on the canvas and drop the loader node
+    for node in graph["nodes"]:
+        if node["id"] == "c2":
+            node["position"] = {"x": 650, "y": 240}
+    graph["nodes"] = [node for node in graph["nodes"] if node["id"] != "c1"]
+    graph["edges"] = []
+    compat.save(graph, imported["name"])
+
+    exported = compat.export_workflow(imported["id"], fmt="comfyui-ui")
+    assert [spec["id"] for spec in exported["nodes"]] == [2]
+    sampler = exported["nodes"][0]
+    assert sampler["pos"] == [650, 240]
+    assert sampler["inputs"][0]["link"] == 1
+    assert exported["links"] == _ui_payload()["links"]  # ui_meta carrier keeps the original links
+    assert exported["version"] == 0.4
 
 
 def test_export_import_routes_against_installed_plugin(tmp_path, monkeypatch):
