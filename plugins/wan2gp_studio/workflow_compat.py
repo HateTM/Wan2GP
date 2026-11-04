@@ -348,6 +348,8 @@ class WorkflowCompat:
 
     def export_workflow(self, slug: str, fmt: str = "wanflow") -> dict[str, Any]:
         graph = self.load(slug)
+        if str(fmt).lower() in ("comfyui-ui", "ui"):
+            return self._export_comfyui_ui(graph)
         model = self._module("graph_model")
         if str(fmt).lower() in ("comfyui", "comfyui-api"):
             node_keys = {}
@@ -448,6 +450,134 @@ class WorkflowCompat:
             "report": {"format": "comfyui", "opaque": True, "executable": False},
         }
 
+    @staticmethod
+    def _looks_like_comfyui_ui(payload: Any) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        nodes = payload.get("nodes")
+        if not isinstance(nodes, list) or not nodes:
+            return False
+        if "edges" in payload or not isinstance(payload.get("links"), list):
+            return False
+        return any(isinstance(node, dict) and node.get("type") for node in nodes)
+
+    def _import_comfyui_ui(self, payload: dict[str, Any], name: str | None) -> dict[str, Any]:
+        """Import ComfyUI UI-format JSON: layout, values and links are preserved as opaque nodes."""
+        model = self._module("graph_model")
+        raw_links = payload.get("links") if isinstance(payload.get("links"), list) else []
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        for spec in payload.get("nodes") or []:
+            if not isinstance(spec, dict) or "id" not in spec:
+                continue
+            key = str(spec.get("id"))
+            pos = spec.get("pos") or [0, 0]
+            comfy = {
+                "format": "ui",
+                "key": key,
+                "class_type": str(spec.get("type") or ""),
+                "mode": spec.get("mode"),
+                "properties": copy.deepcopy(spec.get("properties") or {}),
+                "widgets_values": copy.deepcopy(spec.get("widgets_values")),
+                "inputs": copy.deepcopy(spec.get("inputs") or []),
+                "outputs": copy.deepcopy(spec.get("outputs") or []),
+                "pos": list(pos),
+            }
+            nodes.append({
+                "id": "c" + key,
+                "type": "comfyui_node",
+                "title": str(spec.get("title") or comfy["class_type"] or key),
+                "position": {"x": float(pos[0]) if len(pos) > 0 else 0, "y": float(pos[1]) if len(pos) > 1 else 0},
+                "params": {"comfyui": comfy},
+                "enabled": spec.get("mode", 0) != 4,
+            })
+        for link in raw_links:
+            if not isinstance(link, list) or len(link) < 5:
+                continue
+            link_id, src, src_slot, tgt, tgt_slot = link[0], link[1], link[2], link[3], link[4]
+            ltype = str(link[5]) if len(link) > 5 else ""
+            edges.append({
+                "id": "l" + str(link_id),
+                "source": {"node": "c" + str(src), "port": "out" + str(src_slot)},
+                "target": {"node": "c" + str(tgt), "port": "in" + str(tgt_slot)},
+                "type": ltype,
+            })
+        if nodes and raw_links:
+            nodes[0].setdefault("params", {}).setdefault("comfyui", {})["ui_links"] = copy.deepcopy(raw_links)
+        graph = {"name": str(name or "ComfyUI UI import"), "nodes": nodes, "edges": edges, "groups": []}
+        normalized = model.normalize_graph(graph)
+        normalized["name"] = str(name or "ComfyUI UI import")
+        known = self.node_types()
+        unknown = ["comfyui_node"] if known and "comfyui_node" not in known else []
+        title = str(name or normalized.get("name") or "ComfyUI UI import")
+        saved = self.save(normalized, title)
+        return {
+            "id": saved["id"],
+            "name": normalized.get("name") or title,
+            "legacy": False,
+            "unknown_nodes": unknown,
+            "warnings": [
+                "ComfyUI UI-format imported as opaque nodes: layout and values are preserved, execution is not supported yet."
+            ],
+            "node_count": len(nodes),
+            "report": {"format": "comfyui-ui", "opaque": True, "executable": False, "links": len(edges)},
+        }
+
+    def _export_comfyui_ui(self, graph: dict[str, Any]) -> dict[str, Any]:
+        comfy_nodes: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        ui_links = None
+        for node in graph.get("nodes") or []:
+            params = node.get("params") if isinstance(node.get("params"), dict) else {}
+            comfy = params.get("comfyui")
+            if isinstance(comfy, dict) and comfy.get("format") == "ui":
+                comfy_nodes.append((node, comfy))
+                if ui_links is None and isinstance(comfy.get("ui_links"), list):
+                    ui_links = comfy["ui_links"]
+        if not comfy_nodes:
+            raise WorkflowImportError(
+                "Workflow has no ComfyUI UI nodes to export.",
+                report={"format": "comfyui-ui", "nodes": 0},
+            )
+        node_specs: list[dict[str, Any]] = []
+        last_node_id = 0
+        for node, comfy in comfy_nodes:
+            try:
+                key = int(comfy.get("key"))
+            except (TypeError, ValueError):
+                continue
+            last_node_id = max(last_node_id, key)
+            node_specs.append({
+                "id": key,
+                "type": comfy.get("class_type"),
+                "title": node.get("title"),
+                "mode": comfy.get("mode") if comfy.get("mode") is not None else 0,
+                "pos": list(comfy.get("pos") or [0, 0]),
+                "properties": copy.deepcopy(comfy.get("properties") or {}),
+                "widgets_values": copy.deepcopy(comfy.get("widgets_values")),
+                "inputs": copy.deepcopy(comfy.get("inputs") or []),
+                "outputs": copy.deepcopy(comfy.get("outputs") or []),
+                "order": 0,
+                "flags": {},
+            })
+        last_link_id = 0
+        for link in ui_links or []:
+            if isinstance(link, list) and link:
+                try:
+                    last_link_id = max(last_link_id, int(link[0]))
+                except (TypeError, ValueError):
+                    pass
+        return {
+            "format": "comfyui-ui",
+            "last_node_id": last_node_id,
+            "last_link_id": last_link_id,
+            "nodes": node_specs,
+            "links": copy.deepcopy(ui_links or []),
+            "groups": [],
+            "config": {},
+            "extra": {},
+            "version": 0.4,
+        }
+
     def import_workflow(self, payload: Any, name: str | None = None) -> dict[str, Any]:
         """Import a canonical or legacy JSON workflow; unknown nodes stay in the graph."""
         if not isinstance(payload, dict):
@@ -456,10 +586,12 @@ class WorkflowCompat:
         comfy = self._comfy_map(payload) or self._comfy_map(graph)
         if comfy is not None:
             return self._import_comfyui(comfy, name)
+        if self._looks_like_comfyui_ui(payload) or self._looks_like_comfyui_ui(graph):
+            return self._import_comfyui_ui(graph if self._looks_like_comfyui_ui(graph) else payload, name)
         if self._looks_like_comfyui(payload) or self._looks_like_comfyui(graph):
             raise WorkflowImportError(
-                "ComfyUI UI-format JSON is not supported yet; export the ComfyUI API (prompt) JSON instead.",
-                report={"format": "comfyui", "supported": False, "reason": "ui-format"},
+                "Unsupported ComfyUI graph: neither API (prompt) nor UI-format could be recognised.",
+                report={"format": "comfyui", "supported": False},
             )
         model = self._module("graph_model")
         schema = str(graph.get("schema") or "")

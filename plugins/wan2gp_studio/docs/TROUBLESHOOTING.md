@@ -16,9 +16,9 @@
 
 `wan2gp-wanflow-ui` is not installed or its folder was renamed. Install it from the Plugin Manager and restart. Everything except the workflow canvas keeps working: `/api/workflow/*` answers `503` with a structured detail, `/api/workflow/status` reports the reason.
 
-## `422` on workflow import
+## Workflow import reports `422`
 
-ComfyUI **API** JSON (`{"1": {"class_type": …}}`) imports as opaque `comfyui_node` nodes — preserved and exportable, but not executable in WanGP yet. ComfyUI **UI-format** JSON is rejected with `422` and `report.reason = "ui-format"`. Export the ComfyUI API (prompt) JSON instead.
+Import accepts: `wan2gp-wanflow-ui` JSON (including legacy v1 `stages` migration), ComfyUI **API** graphs and ComfyUI **UI-format** graphs — the last two as opaque `comfyui_node` nodes (layout, values, links preserved; exportable via `fmt=comfyui` / `fmt=comfyui-ui`; not executable in WanGP). `422` means the JSON could not be mapped at all — see `detail.message` and `detail.report`.
 
 The payload was detected as ComfyUI JSON (`links` or `class_type` structure). ComfyUI import is not implemented yet; export the graph as `wan2gp-wanflow-ui` JSON instead. The response contains `{"report": {"format": "comfyui", "supported": false}}`.
 

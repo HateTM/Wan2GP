@@ -168,6 +168,47 @@ def test_version_gate_and_disabled_state(tmp_path):
     assert current.state() == "available"
 
 
+def _ui_payload():
+    return {
+        "last_node_id": 2, "last_link_id": 1, "version": 0.4,
+        "nodes": [
+            {"id": 1, "type": "CheckpointLoaderSimple", "pos": [100, 100], "mode": 0,
+             "inputs": [], "outputs": [{"name": "MODEL", "type": "MODEL", "links": [1]}],
+             "properties": {}, "widgets_values": ["model.safetensors"]},
+            {"id": 2, "type": "KSampler", "pos": [400, 100], "mode": 0,
+             "inputs": [{"name": "model", "type": "MODEL", "link": 1}], "outputs": [],
+             "properties": {}, "widgets_values": [123, "fixed", 8]},
+        ],
+        "links": [[1, 1, 0, 2, 0, "MODEL"]],
+    }
+
+
+def test_comfyui_ui_import_preserves_layout_and_values(tmp_path):
+    compat = _compat(tmp_path)
+    imported = compat.import_workflow(_ui_payload())
+    assert imported["id"] == "comfyui-ui-import"
+    assert imported["unknown_nodes"] == ["comfyui_node"]
+    stored = compat.load(imported["id"])
+    by_id = {node["id"]: node for node in stored["nodes"]}
+    assert by_id["c1"]["position"] == {"x": 100.0, "y": 100.0}
+    assert by_id["c2"]["params"]["comfyui"]["widgets_values"] == [123, "fixed", 8]
+    edge = stored["edges"][0]
+    assert edge["source"]["node"] == "c1" and edge["target"]["node"] == "c2"
+    assert edge["type"] == "MODEL"
+
+
+def test_comfyui_ui_export_round_trip(tmp_path):
+    compat = _compat(tmp_path)
+    imported = compat.import_workflow(_ui_payload())
+    exported = compat.export_workflow(imported["id"], fmt="comfyui-ui")
+    assert exported["format"] == "comfyui-ui"
+    assert exported["links"] == _ui_payload()["links"]
+    by_id = {node["id"]: node for node in exported["nodes"]}
+    assert by_id[1]["widgets_values"] == ["model.safetensors"]
+    assert by_id[2]["inputs"][0]["link"] == 1
+    assert by_id[2]["pos"] == [400, 100]
+
+
 def test_export_import_routes_against_installed_plugin(tmp_path, monkeypatch):
     plugin = WanGPStudioPlugin()
     plugin.server_config = {
