@@ -134,12 +134,13 @@
     const columns = Math.max(2, Math.floor((width + GAP) / (cardWidth + GAP)));
     state.cardWidth = cardWidth;
     state.columns = columns;
-    state.rowHeight = Math.round(cardWidth * 9 / 16) + 46 + GAP;
+    state.rowHeight = Math.round(cardWidth * 9 / 16) + 40 + GAP;
     const rows = Math.ceil(state.items.length / columns);
     $("gallery-spacer").style.height = rows * state.rowHeight + "px";
     const windowEl = $("gallery-window");
     windowEl.style.gridTemplateColumns = "repeat(" + columns + ", " + cardWidth + "px)";
     windowEl.style.gap = GAP + "px";
+    windowEl.style.setProperty("--card-height", (state.rowHeight - GAP) + "px");
   }
 
   function calibrate() {
@@ -484,6 +485,7 @@
     $("lightbox-delete").addEventListener("click", () => {
       if (state.detail) deleteMedia([state.detail.item.id], state.detail.item.name);
     });
+    updateSelectionBar();
   }
 
   function activate() {
@@ -498,4 +500,5 @@
 
   bind();
   window.WanGPStudioGallery = { activate, reload: () => load(true) };
+  if (location.hash === "#gallery") S.setView("gallery");
 })();

@@ -316,6 +316,7 @@
     $("nav-gallery").classList.toggle("active", gallery);
     $("nav-workflow").classList.toggle("active", !gallery);
     $("breadcrumb-current").textContent = gallery ? "Gallery" : "Workflow";
+    try { history.replaceState(null, "", gallery ? "#gallery" : "#workflow"); } catch (_) {}
     if (gallery && window.WanGPStudioGallery) window.WanGPStudioGallery.activate();
   }
 
@@ -399,6 +400,7 @@
 
   async function init() {
     bindEvents();
+    if (location.hash === "#gallery") setView("gallery");
     await loadModels();
     await refreshJobs();
     window.setInterval(refreshJobs, 5000);
