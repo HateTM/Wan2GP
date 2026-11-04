@@ -5,12 +5,14 @@ on:
     paths:
       - "plugins/wan2gp_studio/**"
       - "plugins/plugin_manager/**"
+      - "plugins/wan2gp-wanflow-ui/**"
       - "shared/utils/plugins.py"
       - ".github/workflows/studio-tests.yml"
   pull_request:
     paths:
       - "plugins/wan2gp_studio/**"
       - "plugins/plugin_manager/**"
+      - "plugins/wan2gp-wanflow-ui/**"
       - "shared/utils/plugins.py"
       - ".github/workflows/studio-tests.yml"
 
@@ -47,11 +49,11 @@ jobs:
       - name: Run Studio tests
         env:
           WANFLOW_UI_REQUIRED: "1"
-        run: python -m pytest plugins/wan2gp_studio/tests -q
+        run: python -m pytest plugins/wan2gp_studio/tests -q -rs
       - name: Run plugin manager tests (version compare, update fork-guard)
-        run: python -m pytest plugins/plugin_manager/tests -q
+        run: python -m pytest plugins/plugin_manager/tests -q -rs
       - name: Run vendored WanFlow UI tests (reconciled fork vs current WanGP)
-        run: python -m pytest plugins/wan2gp-wanflow-ui/tests -q
+        run: python -m pytest plugins/wan2gp-wanflow-ui/tests -q -rs
 
   # Optional integration job. The WanFlow UI fork is vendored at
   # plugins/wan2gp-wanflow-ui and covered by the main job above; this job is
@@ -97,4 +99,4 @@ jobs:
       - name: Run Studio tests against real WanFlow
         env:
           WANFLOW_UI_REQUIRED: "1"
-        run: python -m pytest plugins/wan2gp_studio/tests -q
+        run: python -m pytest plugins/wan2gp_studio/tests -q -rs
