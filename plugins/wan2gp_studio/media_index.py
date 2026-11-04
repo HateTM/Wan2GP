@@ -229,6 +229,7 @@ class MediaIndex:
 
     def _do_scan(self) -> None:
         entries: dict[str, dict[str, Any]] = {}
+        scan_started_ns = time.time_ns()
         for root in self.roots():
             for dirpath, dirnames, filenames in os.walk(root):
                 dirnames[:] = sorted(
@@ -257,6 +258,12 @@ class MediaIndex:
                         "mtime_ns": int(stat.st_mtime_ns),
                     }
         with self._lock:
+            # A file indexed while this walk was in flight (e.g. index_file
+            # after an upload) may postdate the walk's visit of its directory;
+            # keep live entries that appeared after the scan started.
+            for media_id, entry in self._entries.items():
+                if media_id not in entries and entry["mtime_ns"] >= scan_started_ns:
+                    entries[media_id] = entry
             self._entries = entries
             self._scanned_at = time.time()
             for stale in [key for key in self._fact_cache if key not in entries]:

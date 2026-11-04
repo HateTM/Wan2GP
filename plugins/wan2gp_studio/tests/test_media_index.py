@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 import wave
 import zipfile
 
@@ -198,6 +199,19 @@ def test_symlink_escape_is_rejected(index, media_root, tmp_path):
     assert index._inside_roots(str(link)) is False
     assert index.index_file(str(link)) is None
     assert index.delete(media_id_for(str(link))) is False
+
+
+def test_scan_keeps_entries_indexed_during_the_walk(index, media_root):
+    """A background scan that started before index_file() must not drop it."""
+    live = {
+        "id": "live-entry", "path": str(media_root / "later.png"), "name": "later.png",
+        "relative": "later.png", "root": str(media_root), "kind": "image",
+        "size": 1, "mtime": 0.0, "mtime_ns": time.time_ns() + 10**9,
+    }
+    with index._lock:
+        index._entries["live-entry"] = live
+    index._do_scan()  # walk cannot see later.png (it is not on disk)
+    assert index.get("live-entry") is not None
 
 
 def test_thumbnail_bytes_use_shared_engine(index):

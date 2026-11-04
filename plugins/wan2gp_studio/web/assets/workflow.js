@@ -341,27 +341,38 @@
         toast("Nothing to save yet.", true);
         return;
       }
+      setBusy(true);  // no re-click while the handshake is in flight
       const graph = await requestCanvasGraph();
       if (!graph) {
+        setBusy(false);
         toast("Could not read the current graph from the canvas. Save aborted.", true);
         setStatus("Save aborted");
         return;
       }
       state.graph = graph;
-      saveGraph(graph, (graph && graph.name) || "Untitled workflow").catch(() => {});
+      saveGraph(graph, (graph && graph.name) || "Untitled workflow")
+        .catch(() => {})
+        .finally(() => setBusy(false));
     });
     $("workflow-run").addEventListener("click", async () => {
       if (!state.graph) {
         toast("Open or create a workflow first.", true);
         return;
       }
+      if (state.runId) {  // checked synchronously, before the handshake await
+        toast("A workflow is already running.", true);
+        return;
+      }
+      setBusy(true);
       const graph = await requestCanvasGraph();
       if (!graph) {
+        setBusy(false);
         toast("Could not read the current graph from the canvas. Run aborted.", true);
         setStatus("Run aborted");
         return;
       }
       state.graph = graph;
+      if (state.runId) return;  // re-check after the await; startRun re-checks too
       startRun(graph);
     });
     $("workflow-cancel").addEventListener("click", cancelRun);
