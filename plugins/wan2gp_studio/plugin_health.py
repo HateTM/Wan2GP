@@ -13,6 +13,8 @@ States (``entry["state"]``):
 - ``no-remote``: a checkout without an ``origin`` remote;
 - ``unreachable``: the remote could not be fetched (deleted upstream, offline);
 - ``stale-refs``: the fetch failed but old origin refs allow a best-effort answer;
+- ``fork-detached``: local commits on top of an unreachable remote - a locally
+  maintained fork (deleted upstream), not a broken plugin;
 - ``current`` / ``behind`` / ``fork`` / ``fork-diverged``: relative to ``origin/<default>``.
 """
 from __future__ import annotations
@@ -141,7 +143,9 @@ def collect_plugin_health(
             if lok and lout:
                 entry["local_commits"] = lout.splitlines()[:LOCAL_COMMIT_PREVIEW]
         if fetch_error:
-            entry["state"] = "stale-refs"
+            # Local work on top of a dead remote is a maintained fork, not a
+            # broken plugin; without local commits the answer is just stale.
+            entry["state"] = "fork-detached" if entry["ahead"] else "stale-refs"
             entry["error"] = fetch_error
         elif entry["ahead"] and entry["behind"]:
             entry["state"] = "fork-diverged"

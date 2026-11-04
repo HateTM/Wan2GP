@@ -77,6 +77,13 @@ def health_root(tmp_path):
     _git("clone", "-q", str(upstream), str(dead), cwd=root)
     _git("remote", "set-url", "origin", str(tmp_path / "nowhere"), cwd=dead)
 
+    dead_fork = root / "DeadFork-Clone"
+    _git("clone", "-q", str(upstream), str(dead_fork), cwd=root)
+    _git("remote", "set-url", "origin", str(tmp_path / "nowhere"), cwd=dead_fork)
+    (dead_fork / "local.py").write_text("# local\n", encoding="utf-8")
+    _git("add", "-A", cwd=dead_fork)
+    _git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "Maintain locally after upstream died", cwd=dead_fork)
+
     for clone in ("Current-Clone", "Fork-Clone", "Behind-Clone", "Dead-Clone"):
         _git("config", "user.email", "t@t", cwd=root / clone)
         _git("config", "user.name", "t", cwd=root / clone)
@@ -111,6 +118,9 @@ def test_fetch_report_upstream_versions_and_behind(health_root):
     assert states["Dead-Clone"]["state"] == "stale-refs"
     assert states["Dead-Clone"]["error"]
     assert states["Dead-Clone"]["upstream_version"] == "1.0.0"
+    # ... but local work on top of a dead remote is a maintained fork
+    assert states["DeadFork-Clone"]["state"] == "fork-detached"
+    assert any("Maintain locally" in title for title in states["DeadFork-Clone"]["local_commits"])
 
 
 def test_diverged_fork_is_flagged(health_root):

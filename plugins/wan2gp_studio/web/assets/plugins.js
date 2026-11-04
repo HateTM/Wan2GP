@@ -10,13 +10,14 @@
     "behind": ["Update available", "warn"],
     "fork": ["Local fork", "warn"],
     "fork-diverged": ["Fork diverged", "warn"],
+    "fork-detached": ["Local fork · upstream gone", "warn"],
     "stale-refs": ["Stale refs", "error"],
     "unreachable": ["Remote unreachable", "error"],
     "no-remote": ["No remote", "muted"],
     "no-upstream-ref": ["No upstream ref", "muted"],
     "built-in": ["Built-in", "muted"]
   };
-  const ATTENTION_STATES = ["behind", "fork", "fork-diverged", "stale-refs", "unreachable"];
+  const ATTENTION_STATES = ["behind", "fork", "fork-diverged", "fork-detached", "stale-refs", "unreachable"];
 
   function render(payload) {
     const rows = $("plugins-rows");
