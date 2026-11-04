@@ -139,9 +139,9 @@ def test_long_session_soak(page, tmp_path_factory):
     upload_file = tmp_path_factory.mktemp("soak") / "soak-upload.png"
     upload_file.write_bytes(buffer.getvalue())
     page.set_input_files("#gallery-file", [str(upload_file)])
-    before = _total(page)
+    # wait on base+1: reading the total after set_input_files races the XHR
     page.wait_for_function(
-        f"() => window.WanGPStudioGallery.debug().total === {before + 1}", timeout=20000
+        f"() => window.WanGPStudioGallery.debug().total === {base + 1}", timeout=30000
     )
     assert _total(page) == base + 1  # the soak upload landed exactly once
     debug = _debug(page)
