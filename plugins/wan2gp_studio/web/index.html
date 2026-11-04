@@ -10,6 +10,8 @@
   <script src="assets/gallery.js" defer></script>
   <script src="assets/workflow.js" defer></script>
   <script src="assets/telemetry.js" defer></script>
+  <script src="assets/dashboard.js" defer></script>
+  <script src="assets/settings.js" defer></script>
 </head>
 <body>
 <div class="app-shell">
@@ -17,6 +19,7 @@
     <a class="brand" href="/studio/"><span class="brand-mark">W</span><span><strong>WanGP</strong><small>STUDIO</small></span></a>
     <div class="sidebar-label">WORKSPACE</div>
     <nav class="primary-nav">
+      <button class="nav-item" id="nav-dashboard"><span class="nav-icon">◫</span> Dashboard</button>
       <button class="nav-item active" id="nav-workflow"><span class="nav-icon">⌘</span> Workflow</button>
       <button class="nav-item" id="nav-models"><span class="nav-icon">◈</span> Models</button>
       <button class="nav-item" id="nav-gallery"><span class="nav-icon">▧</span> Gallery <span class="nav-count" id="gallery-nav-count" hidden></span></button>
@@ -32,6 +35,7 @@
     <div class="sidebar-label section-gap">SYSTEM</div>
     <nav class="primary-nav">
       <button class="nav-item" id="nav-resources"><span class="nav-icon">▤</span> Resources</button>
+      <button class="nav-item" id="nav-settings"><span class="nav-icon">⚙</span> Settings</button>
     </nav>
     <div class="sidebar-spacer"></div>
     <section class="memory-card">
@@ -46,7 +50,7 @@
   <main class="main-area">
     <header class="topbar">
       <div class="breadcrumbs"><span>Workspace</span><span class="crumb-sep">/</span><strong id="breadcrumb-current">Workflow</strong></div>
-      <div class="top-actions"><span class="runtime-pill"><i></i> WanGP runtime</span><button class="icon-button" id="refresh-models" title="Refresh model catalog">↻</button><span class="user-button">0.7</span></div>
+      <div class="top-actions"><span class="runtime-pill"><i></i> WanGP runtime</span><button class="icon-button" id="refresh-models" title="Refresh model catalog">↻</button><span class="user-button">1.0</span></div>
     </header>
 
     <section class="workspace">
@@ -186,11 +190,52 @@
       <p class="field-note" id="resource-sources"></p>
     </section>
 
+    <section class="dashboard-view" id="dashboard-view" hidden>
+      <header class="gallery-head">
+        <div><div class="eyebrow">WORKSPACE</div><h1>Dashboard</h1><p id="dashboard-summary">Runtime overview</p></div>
+        <div class="gallery-head-actions"><button class="button button-quiet" id="dashboard-refresh">↻ Refresh</button></div>
+      </header>
+      <div class="resource-grid">
+        <article class="resource-card">
+          <div class="resource-head"><span>RUNTIME</span><span id="dash-runtime">—</span></div>
+          <div class="metric"><span>WanGP core</span><strong id="dash-core">—</strong></div>
+          <div class="metric"><span>Workflow engine</span><strong id="dash-workflow">—</strong></div>
+          <div class="metric"><span>Optional plugins</span><strong id="dash-plugins">—</strong></div>
+        </article>
+        <article class="resource-card">
+          <div class="resource-head"><span>LIBRARY</span><span id="dash-media-total">—</span></div>
+          <div class="metric"><span>Images</span><strong id="dash-images">0</strong></div>
+          <div class="metric"><span>Videos</span><strong id="dash-videos">0</strong></div>
+          <div class="metric"><span>Audio / Worlds</span><strong id="dash-other">0</strong></div>
+        </article>
+        <article class="resource-card">
+          <div class="resource-head"><span>ACTIVITY</span><span id="dash-updated">—</span></div>
+          <div class="metric"><span>Active jobs</span><strong id="dash-jobs">0</strong></div>
+          <div class="metric"><span>Workflow runs</span><strong id="dash-runs">0</strong></div>
+          <div class="metric current-line" id="dash-activity">No active work</div>
+        </article>
+      </div>
+      <div class="dashboard-actions">
+        <button class="button button-quiet" id="dash-goto-gallery">Open Gallery</button>
+        <button class="button button-quiet" id="dash-goto-workflow">Open Workflow</button>
+        <button class="button button-quiet" id="dash-goto-resources">Open Resources</button>
+      </div>
+    </section>
+
+    <section class="settings-view" id="settings-view" hidden>
+      <header class="gallery-head">
+        <div><div class="eyebrow">SYSTEM</div><h1>Settings</h1><p>Read-only diagnostics for this Studio installation.</p></div>
+      </header>
+      <div class="settings-block"><div class="section-title"><span>PLUGINS &amp; INTEGRATION</span></div><div class="settings-table" id="settings-plugins"></div></div>
+      <div class="settings-block"><div class="section-title"><span>MEDIA ROOTS</span></div><div class="settings-roots" id="settings-roots"></div></div>
+      <p class="field-note">Studio does not change WanGP settings; edit them in the native WanGP UI. Attribution and licenses: see the plugin README and <code>web/assets/WANFLOW-LICENSE.txt</code>.</p>
+    </section>
+
     <section class="queue-panel">
       <div class="queue-heading"><div class="queue-title"><span class="panel-kicker">EXECUTION</span><h2>Studio tasks <span id="queue-count">0</span></h2></div><div class="queue-actions"><span class="queue-runtime"><i></i> Submitted to native queue</span><button class="small-tool" id="refresh-queue">↻</button></div></div>
       <div class="queue-list" id="queue-list"><div class="queue-empty">No Studio jobs yet. Run a model to see execution progress here.</div></div>
     </section>
-    <footer class="main-footer"><span>WanGP Studio <b>0.7.0</b> · Powered by WanGP</span><span id="api-status">Connecting to local runtime…</span></footer>
+    <footer class="main-footer"><span>WanGP Studio <b>1.0.0</b> · Powered by WanGP</span><span id="api-status">Connecting to local runtime…</span></footer>
   </main>
 </div>
 

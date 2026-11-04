@@ -331,22 +331,29 @@
     renderModels();
   }
 
+  const VIEW_CONFIG = {
+    workflow: { nav: "nav-workflow", hash: "#workflow", label: "Workflow", section: null },
+    dashboard: { nav: "nav-dashboard", hash: "#dashboard", label: "Dashboard", section: "dashboard-view", mode: "dashboard-mode", activate: "WanGPStudioDashboard" },
+    gallery: { nav: "nav-gallery", hash: "#gallery", label: "Gallery", section: "gallery-view", mode: "gallery-mode", activate: "WanGPStudioGallery" },
+    resources: { nav: "nav-resources", hash: "#resources", label: "Resources", section: "resource-view", mode: "resources-mode", activate: "WanGPStudioTelemetry" },
+    settings: { nav: "nav-settings", hash: "#settings", label: "Settings", section: "settings-view", mode: "settings-mode", activate: "WanGPStudioSettings" }
+  };
+
   function setView(view) {
-    const gallery = view === "gallery";
-    const resources = view === "resources";
+    const config = VIEW_CONFIG[view] || VIEW_CONFIG.workflow;
     state.view = view;
-    document.body.classList.toggle("gallery-mode", gallery);
-    document.body.classList.toggle("resources-mode", resources);
-    $("gallery-view").hidden = !gallery;
-    $("resource-view").hidden = !resources;
-    $("nav-gallery").classList.toggle("active", gallery);
-    $("nav-resources").classList.toggle("active", resources);
-    $("nav-workflow").classList.toggle("active", !gallery && !resources);
-    $("breadcrumb-current").textContent = gallery ? "Gallery" : (resources ? "Resources" : "Workflow");
-    try { history.replaceState(null, "", gallery ? "#gallery" : (resources ? "#resources" : "#workflow")); } catch (_) {}
-    if (gallery && window.WanGPStudioGallery) window.WanGPStudioGallery.activate();
-    if (resources && window.WanGPStudioTelemetry) window.WanGPStudioTelemetry.activate();
-    if (!gallery && !resources && window.WanGPStudioCanvas) window.WanGPStudioCanvas.activate();
+    document.body.classList.toggle("workspace-hidden", Boolean(config.section));
+    Object.keys(VIEW_CONFIG).forEach((name) => {
+      const item = VIEW_CONFIG[name];
+      if (item.section) $(item.section).hidden = name !== view;
+      if (item.mode) document.body.classList.toggle(item.mode, name === view);
+      const nav = $(item.nav);
+      if (nav) nav.classList.toggle("active", name === view);
+    });
+    $("breadcrumb-current").textContent = config.label;
+    try { history.replaceState(null, "", config.hash); } catch (_) {}
+    if (config.activate && window[config.activate]) window[config.activate].activate();
+    if (!config.section && window.WanGPStudioCanvas) window.WanGPStudioCanvas.activate();
   }
 
   function bindEvents() {
@@ -406,6 +413,8 @@
     $("nav-workflow").addEventListener("click", () => setView("workflow"));
     $("nav-gallery").addEventListener("click", () => setView("gallery"));
     $("nav-resources").addEventListener("click", () => setView("resources"));
+    $("nav-dashboard").addEventListener("click", () => setView("dashboard"));
+    $("nav-settings").addEventListener("click", () => setView("settings"));
     $("nav-models").addEventListener("click", () => $("model-search").focus());
     document.addEventListener("keydown", (event) => {
       if (event.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) {

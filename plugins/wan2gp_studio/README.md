@@ -20,7 +20,9 @@ WanGP Studio is a lightweight, full-screen plugin frontend for the existing WanG
 
 The web app is registered through WAN2GPPlugin.register_web_app() and is served by the existing WanGP server behind its authentication. The plugin metadata declares WanGP 18.84 as its minimum supported version, matching the API surface used by this implementation.
 
-## v0.1 scope
+## Scope (v1.0)
+
+v1.0 covers the Dashboard, Workflow (node canvas with save/run/cancel and import/export), Media Center (gallery, upload, Worlds), Models (availability, presets, LoRA inventory), Resources (read-only telemetry) and Settings (read-only diagnostics). The bullets below describe the original v0.1 bootstrap that the later milestones extended.
 
 - Dynamic model catalogue with basic search and output-type filters.
 - Per-model inspection: definition, metadata, capability schema, local model-file availability, native defaults, presets/profiles and installed LoRA inventory.
@@ -59,6 +61,12 @@ The first frontend is deliberately a lightweight bootstrap. The visual node canv
 ## Vendored canvas assets
 
 `web/assets/canvas.{html,css,js}` are the WanFlow UI editor assets (Apache-2.0, © Javier) vendored unchanged to serve the Studio workflow canvas through `register_web_app`; the license text is kept in `web/assets/WANFLOW-LICENSE.txt`. The Studio-side host (`web/assets/workflow.js`) replaces WanFlow's Gradio hidden-button bridge with the `/studio/api/workflow/*` facade.
+
+## Documentation
+
+- [User guide](docs/USER_GUIDE.md) — install/upgrade, views, gallery, workflow, resources.
+- [Integration and compatibility](docs/INTEGRATION.md) — L1/L2/L3 matrix, capability registry, degradation rules.
+- [Troubleshooting](docs/TROUBLESHOOTING.md) — 404/401/503/422, NVML, empty gallery, known issues.
 
 ## WanGP attribution
 
