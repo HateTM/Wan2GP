@@ -31,6 +31,8 @@
     cards: new Map(),
     error: null,
     queryTimer: null,
+    environment: null,
+    environmentAt: 0,
     ticking: false
   };
 
@@ -280,6 +282,56 @@
     setSelectMode(false);
   }
 
+  async function ensureEnvironment() {
+    if (state.environment && Date.now() - state.environmentAt < 60000) return state.environment;
+    try {
+      state.environment = await api("api/environment");
+    } catch (_) {
+      state.environment = { plugins: [] };
+    }
+    state.environmentAt = Date.now();
+    return state.environment;
+  }
+
+  function imageSuitePlugin() {
+    return (state.environment && state.environment.plugins || []).find((plugin) => plugin.id === "ImageSuite-Wan2GP") || null;
+  }
+
+  function updateSuiteButton() {
+    const button = $("lightbox-suite");
+    if (!button) return;
+    const plugin = imageSuitePlugin();
+    if (!plugin) {
+      button.textContent = "Image Suite · unknown";
+    } else if (plugin.state === "enabled") {
+      button.textContent = "Edit in Image Suite";
+    } else if (plugin.state === "not_installed") {
+      button.textContent = "Image Suite · not installed";
+    } else {
+      button.textContent = "Image Suite · " + plugin.state;
+    }
+  }
+
+  async function editInImageSuite() {
+    await ensureEnvironment();
+    const plugin = imageSuitePlugin();
+    if (!plugin || plugin.state === "not_installed") {
+      toast("Image Suite is not installed. Install it from the WanGP Plugin Manager.", true);
+      return;
+    }
+    if (plugin.state !== "enabled") {
+      toast("Image Suite is installed but disabled. Enable it in the WanGP Plugin Manager and restart WanGP.", true);
+      return;
+    }
+    const item = state.detail && state.detail.item;
+    if (!item) return;
+    try {
+      await navigator.clipboard.writeText(item.path || item.name || "");
+    } catch (_) {}
+    window.open("/", "_blank", "noopener");
+    toast("Image Suite opened in the WanGP UI. File path copied for its Open action.");
+  }
+
   async function openLightbox(id) {
     const dialog = $("lightbox");
     state.detail = null;
@@ -359,6 +411,7 @@
     const download = $("lightbox-download");
     download.setAttribute("href", fileUrl);
     download.setAttribute("download", item.name || "media");
+    ensureEnvironment().then(updateSuiteButton).catch(() => {});
     if (world && world.segments) {
       const segments = document.createElement("div");
       segments.className = "lightbox-segments";
@@ -482,6 +535,9 @@
       }
     });
     $("lightbox-reuse").addEventListener("click", reuseSettings);
+    $("lightbox-suite").addEventListener("click", () => {
+      editInImageSuite().catch((error) => toast(error.message, true));
+    });
     $("lightbox-delete").addEventListener("click", () => {
       if (state.detail) deleteMedia([state.detail.item.id], state.detail.item.name);
     });

@@ -76,6 +76,17 @@ KNOWN_PLUGINS = {
 }
 
 
+def _dedupe_messages(values: list[str]) -> list[str]:
+    """Remove duplicate messages while keeping their original order."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
 class _JobRecord:
     """Small, bounded in-memory view of a WanGP SessionJob."""
 
@@ -188,7 +199,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
     def __init__(self) -> None:
         super().__init__()
         self.name = "WanGP Studio"
-        self.version = "0.5.0"
+        self.version = "0.6.0"
         self.description = "Lightweight full-screen workspace for WanGP models, generation and workflows."
         self.type = ["app"]
         self._session = None
@@ -803,6 +814,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                         with record._lock:
                             record.generated_files = list(result.generated_files or [])
                             record.errors.extend(str(error) for error in (result.errors or []))
+                            record.errors = _dedupe_messages(record.errors)
                             record.status = "completed" if result.success else ("cancelled" if result.cancelled else "failed")
                             record.progress = 100 if result.success else record.progress
                             record.phase = record.status
@@ -860,22 +872,27 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             return record.snapshot()
 
         @app.get("/api/jobs/{job_id}/events")
-        async def job_events(job_id: str):
+        async def job_events(job_id: str, request: Request):
             with jobs_lock:
                 record = jobs.get(job_id)
             if record is None:
                 raise HTTPException(status_code=404, detail="Studio job not found.")
 
-            async def stream_events():
+            try:
+                cursor = int(request.query_params.get("cursor") or request.headers.get("last-event-id") or 0)
+            except ValueError:
                 cursor = 0
+
+            async def stream_events():
+                position = max(0, cursor)
                 last_heartbeat = time.monotonic()
                 while True:
-                    events, latest = record.events_after(cursor)
+                    events, latest = record.events_after(position)
                     for event in events:
-                        cursor = event["id"]
-                        yield f"id: {cursor}\ndata: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+                        position = event["id"]
+                        yield f"id: {position}\ndata: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
                     snapshot = record.snapshot()
-                    if snapshot["status"] in {"completed", "failed", "cancelled"} and cursor >= latest:
+                    if snapshot["status"] in {"completed", "failed", "cancelled"} and position >= latest:
                         yield "event: end\ndata: {}\n\n"
                         break
                     if time.monotonic() - last_heartbeat >= 15:
