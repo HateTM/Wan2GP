@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>WanGP Studio</title>
+  <link rel="stylesheet" href="assets/studio.css">
+  <script src="assets/studio.js" defer></script>
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <a class="brand" href="/studio/"><span class="brand-mark">W</span><span><strong>WanGP</strong><small>STUDIO</small></span></a>
+    <div class="sidebar-label">WORKSPACE</div>
+    <nav class="primary-nav">
+      <button class="nav-item active"><span class="nav-icon">⌘</span> Workflow</button>
+      <button class="nav-item" id="nav-models"><span class="nav-icon">◈</span> Models</button>
+      <button class="nav-item" disabled><span class="nav-icon">▧</span> Gallery <span class="nav-soon">NEXT</span></button>
+      <button class="nav-item" disabled><span class="nav-icon">◷</span> History <span class="nav-soon">NEXT</span></button>
+    </nav>
+    <div class="sidebar-label section-gap">MODEL TYPES</div>
+    <div class="library-shortcuts">
+      <button class="library-item" data-filter="video"><span class="type-dot video"></span> Video models</button>
+      <button class="library-item" data-filter="image"><span class="type-dot image"></span> Image models</button>
+      <button class="library-item" data-filter="audio"><span class="type-dot audio"></span> Audio models</button>
+      <button class="library-item" data-filter="3d"><span class="type-dot three"></span> 3D models</button>
+    </div>
+    <div class="sidebar-spacer"></div>
+    <section class="memory-card">
+      <div class="memory-heading"><span>RUNTIME</span><span class="live-dot"></span></div>
+      <div class="memory-runtime">WanGP connected</div>
+      <div class="memory-caption">Single runtime · No duplicate model process</div>
+      <div class="memory-foot"><span>API SESSION</span><span id="runtime-state">Checking…</span></div>
+    </section>
+    <div class="sidebar-footer"><span class="status-dot"></span> Connected to WanGP</div>
+  </aside>
+
+  <main class="main-area">
+    <header class="topbar">
+      <div class="breadcrumbs"><span>Workspace</span><span class="crumb-sep">/</span><strong>Workflow</strong></div>
+      <div class="top-actions"><span class="runtime-pill"><i></i> WanGP runtime</span><button class="icon-button" id="refresh-models" title="Refresh model catalog">↻</button><span class="user-button">0.1</span></div>
+    </header>
+
+    <section class="workspace">
+      <div class="workspace-heading">
+        <div><div class="eyebrow">VISUAL GENERATION WORKSPACE</div><h1>Workflow</h1><p>Explore installed models and submit generation tasks to WanGP.</p></div>
+        <div class="heading-actions"><button class="button button-quiet" id="clear-selection">Reset</button><button class="button button-primary" id="run-generation">▶ Run generation</button></div>
+      </div>
+
+      <div class="studio-grid">
+        <section class="panel model-panel">
+          <div class="panel-header"><div><span class="panel-kicker">NODE LIBRARY</span><h2>Models</h2></div><span class="count-chip" id="model-count">—</span></div>
+          <label class="search-box"><span>⌕</span><input id="model-search" type="search" placeholder="Search installed models…"><kbd>/</kbd></label>
+          <div class="filter-row" id="model-filters">
+            <button class="filter-chip selected" data-filter="all">All</button><button class="filter-chip" data-filter="video">Video</button><button class="filter-chip" data-filter="image">Image</button><button class="filter-chip" data-filter="audio">Audio</button><button class="filter-chip" data-filter="3d">3D</button>
+          </div>
+          <div class="model-list" id="model-list"><div class="empty-state">Loading model catalog…</div></div>
+        </section>
+
+        <section class="panel canvas-panel">
+          <div class="canvas-toolbar"><div><span class="panel-kicker">CANVAS</span><strong>Untitled workflow</strong><span class="draft-tag">DRAFT</span></div><div class="canvas-tools"><button class="small-tool" id="zoom-out">−</button><span id="zoom-value">100%</span><button class="small-tool" id="zoom-in">+</button></div></div>
+          <div class="canvas" id="workflow-canvas">
+            <div class="canvas-grid"></div>
+            <div class="canvas-hint" id="canvas-hint"><div class="hint-icon">＋</div><strong>Select a model to start</strong><span>Choose a model from the library to inspect its native settings and create a generation node.</span></div>
+            <div class="workflow-node" id="generation-node" hidden>
+              <div class="node-top"><span class="node-type-icon">◈</span><span class="node-kind">GENERATION</span><span class="node-menu">···</span></div>
+              <div class="node-title" id="node-title">Generation</div><div class="node-model" id="node-model">Select a model</div>
+              <div class="node-divider"></div><div class="node-ports"><span><i class="port input"></i> Prompt</span><span><i class="port output"></i> Media</span></div>
+              <div class="node-footer"><span class="node-status" id="node-status">Ready</span><span>WanGP</span></div>
+            </div>
+          </div>
+          <div class="canvas-footer"><span><kbd>/</kbd> Search models <span class="footer-divider">·</span> <kbd>Scroll</kbd> Zoom</span><span id="canvas-model-count">No node selected</span></div>
+        </section>
+
+        <section class="panel inspector-panel">
+          <div class="panel-header"><div><span class="panel-kicker">INSPECTOR</span><h2>Parameters</h2></div><span class="inspector-icon">☷</span></div>
+          <div class="inspector-content">
+            <div class="inspector-empty" id="inspector-empty"><div class="inspector-empty-icon">☷</div><strong>Nothing selected</strong><span>Select a model to load its native WanGP settings.</span></div>
+            <div id="inspector-editor" hidden>
+              <div class="selected-model"><div class="selected-model-icon">◈</div><div><strong id="selected-model-name">Model</strong><small id="selected-model-type">model_type</small></div></div>
+              <div class="inspector-section">
+                <div class="section-title"><span>GENERATION SETTINGS</span><button id="reset-settings">Reset</button></div>
+                <label class="field-label" for="prompt-input">Prompt</label><textarea id="prompt-input" rows="5" placeholder="Describe the scene…"></textarea>
+                <div class="settings-toolbar"><span>Full WanGP settings JSON</span><button id="format-json">Format</button></div>
+                <textarea id="settings-json" class="json-editor" spellcheck="false" rows="12"></textarea>
+                <p class="field-note">Advanced parameters are preserved. Edit the JSON to access model-specific options not shown as simple controls.</p>
+              </div>
+              <div class="inspector-section">
+                <div class="section-title"><span>PRESETS &amp; PROFILES</span><span id="preset-count"></span></div>
+                <div class="preset-row"><select id="preset-select" class="preset-select" disabled><option>No presets available</option></select><button class="button button-quiet preset-load" id="load-preset" disabled>Load</button></div>
+                <p class="field-note">Loads the selected native WanGP preset into the full settings editor.</p>
+              </div>
+              <div class="inspector-section">
+                <div class="section-title"><span>INSTALLED LORAS</span><span id="lora-count"></span></div>
+                <div class="capability-list" id="lora-list"><span class="field-note">Select a model to inspect its LoRAs.</span></div>
+              </div>
+              <div class="inspector-section"><div class="section-title"><span>MODEL CAPABILITIES</span></div><div class="capability-list" id="capability-list"></div></div>
+            </div>
+          </div>
+          <div class="inspector-bottom"><span class="save-indicator" id="settings-state">No model selected</span><button class="button button-primary button-full" id="run-from-inspector" disabled>Run this model</button></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="queue-panel">
+      <div class="queue-heading"><div class="queue-title"><span class="panel-kicker">EXECUTION</span><h2>Studio tasks <span id="queue-count">0</span></h2></div><div class="queue-actions"><span class="queue-runtime"><i></i> Submitted to native queue</span><button class="small-tool" id="refresh-queue">↻</button></div></div>
+      <div class="queue-list" id="queue-list"><div class="queue-empty">No Studio jobs yet. Run a model to see execution progress here.</div></div>
+    </section>
+    <footer class="main-footer"><span>WanGP Studio <b>0.1.0</b> · Powered by WanGP</span><span id="api-status">Connecting to local runtime…</span></footer>
+  </main>
+</div>
+<div class="toast-region" id="toast-region" aria-live="polite"></div>
+</body>
+</html>
