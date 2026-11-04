@@ -118,13 +118,6 @@
       state.total + " items · " + cachedCount() + " in memory · WanGP output roots";
   }
 
-  function evictDistantPages(centerPage) {
-    if (state.pages.size <= KEEP_PAGES * 2 + 1) return;
-    for (const key of Array.from(state.pages.keys())) {
-      if (Math.abs(key - centerPage) > KEEP_PAGES) state.pages.delete(key);
-    }
-  }
-
   async function loadPage(page) {
     if (page < 0 || (state.total && page * PAGE >= state.total)) return;
     if (state.pages.has(page) || state.fetching.has(page)) return;
@@ -139,7 +132,6 @@
       if (generation !== state.generation) return; // filters changed mid-flight
       state.total = Number(payload.total) || 0;
       state.pages.set(page, payload.items || []);
-      evictDistantPages(page);
       state.error = null;
       updateSummary();
       layout();
@@ -279,6 +271,14 @@
     if (state.total) {
       const firstPage = Math.max(0, Math.floor(start / PAGE) - 1);
       const lastPage = Math.floor(Math.max(0, end - 1) / PAGE) + 1;
+      // Eviction is anchored to the real viewport, never to a fetched page:
+      // out-of-order responses would otherwise evict the pages the user is
+      // looking at and start a load/evict ping-pong.
+      const lowPage = Math.max(0, firstPage - KEEP_PAGES);
+      const highPage = lastPage + KEEP_PAGES;
+      for (const key of Array.from(state.pages.keys())) {
+        if (key < lowPage || key > highPage) state.pages.delete(key);
+      }
       for (let page = firstPage; page <= lastPage; page += 1) loadPage(page);
     }
   }
@@ -662,17 +662,21 @@
       row.className = "upload-row";
       row.dataset.upload = entry.id;
       row.innerHTML = uploadRowHtml(entry);
-      row.querySelector('[data-act="cancel"]').addEventListener("click", () => {
+      const wire = (action, handler) => {
+        const button = row.querySelector('[data-act="' + action + '"]');
+        if (button) button.addEventListener("click", handler);
+      };
+      wire("cancel", () => {
         if (entry.xhr) entry.xhr.abort();
         else { entry.status = "cancelled"; renderUploadRows(); pumpUploads(); }
       });
-      row.querySelector('[data-act="retry"]').addEventListener("click", () => {
+      wire("retry", () => {
         entry.status = "queued";
         entry.error = null;
         renderUploadRows();
         pumpUploads();
       });
-      row.querySelector('[data-act="remove"]').addEventListener("click", () => {
+      wire("remove", () => {
         uploadState.queue = uploadState.queue.filter((item) => item !== entry);
         renderUploadRows();
         pumpUploads();
@@ -740,6 +744,7 @@
       uploadState.done += 1;
     }
     updateUploadRow(entry);
+    pumpUploads(); // a slot just freed: start the next queued file
     const pending = uploadState.queue.some((item) => item.status === "queued" || item.status === "uploading");
     if (!pending && uploadState.done) {
       toast("Uploaded " + uploadState.done + " file(s).");
@@ -842,6 +847,20 @@
   }
 
   bind();
-  window.WanGPStudioGallery = { activate, reload: () => load(true) };
+  window.WanGPStudioGallery = {
+    activate,
+    reload: () => load(true),
+    // Small introspection surface for the e2e suite: the memory bounds of the
+    // page store are a test contract, not an implementation accident.
+    debug: () => ({
+      pages: state.pages.size,
+      pageKeys: Array.from(state.pages.keys()),
+      fetching: Array.from(state.fetching),
+      total: state.total,
+      cards: state.cards.size,
+      domCards: $("gallery-window").children.length,
+      scrollTop: $("gallery-viewport").scrollTop
+    })
+  };
   if (location.hash === "#gallery") S.setView("gallery");
 })();

@@ -1,0 +1,49 @@
+name: Studio E2E
+
+on:
+  push:
+    paths:
+      - "plugins/wan2gp_studio/**"
+      - ".github/workflows/studio-e2e.yml"
+  pull_request:
+    paths:
+      - "plugins/wan2gp_studio/**"
+      - ".github/workflows/studio-e2e.yml"
+
+jobs:
+  studio-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install CPU torch (shared.utils imports it at package init)
+        run: pip install "torch==2.10.0" --index-url https://download.pytorch.org/whl/cpu
+      - name: Install test dependencies
+        run: |
+          pip install \
+            "diffusers==0.36.0" \
+            "gradio==5.29.0" \
+            "GitPython==3.1.45" \
+            "tqdm==4.70.1" \
+            "requests==2.34.2" \
+            "fastapi==0.142.2" \
+            "httpx==0.28.1" \
+            "pillow==11.3.0" \
+            "psutil==7.2.2" \
+            "pytest==9.1.1" \
+            "mutagen==1.48.1" \
+            "accelerate>=1.1.1" \
+            "optimum-quanto==0.2.7" \
+            "transformers==4.54.0" \
+            "safetensors" \
+            "filelock" \
+            "comfy-kitchen==0.2.35" \
+            "uvicorn" \
+            "playwright==1.49.1"
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Run browser tests
+        run: python -m pytest plugins/wan2gp_studio/e2e -q -rs
