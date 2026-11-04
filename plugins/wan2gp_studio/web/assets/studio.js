@@ -56,7 +56,7 @@
       return (!query || (type + " " + name + " " + family).toLowerCase().includes(query))
         && (state.filter === "all" || category(model) === state.filter);
     });
-    $("model-count").textContent = String(state.models.length);
+    $("model-count").textContent = state.models.filter((model) => availabilityStatus(model) === "available").length + "/" + state.models.length;
     if (!models.length) {
       $("model-list").innerHTML = '<div class="empty-state">No matching models.</div>';
       return;
@@ -76,6 +76,25 @@
         '<span class="model-card-meta">' + esc(family) + ' · ' + esc(type) + '</span></button>';
     }).join("");
     $("model-list").querySelectorAll("[data-model]").forEach((button) => button.addEventListener("click", () => selectModel(button.dataset.model)));
+  }
+
+  const NATIVE_TOOLS = { "wan2gp-lora-manager": "LoRA Manager", "wan2gp-queue-editor": "Queue Editor", "ImageSuite-Wan2GP": "Image Suite", "models_manager": "Models Manager" };
+
+  async function renderModelLinks() {
+    const host = $("model-links");
+    if (!host) return;
+    try {
+      const environment = await api("api/environment");
+      const entries = (environment.plugins || []).filter((plugin) => NATIVE_TOOLS[plugin.id] && plugin.state !== "not_installed");
+      host.innerHTML = entries.length
+        ? '<span class="field-note">Native tools:</span>' + entries.map((plugin) =>
+            '<a class="model-link" href="/" target="_blank" rel="noopener" title="Open the WanGP UI tab">' +
+            esc(NATIVE_TOOLS[plugin.id]) + (plugin.state === "enabled" ? "" : " · disabled") + " ↗</a>")
+            .join("")
+        : '<span class="field-note">No optional native tools installed.</span>';
+    } catch (_) {
+      host.innerHTML = "";
+    }
   }
 
   function renderPresets(detail) {
@@ -167,9 +186,13 @@
     $("api-status").textContent = "Loading model catalog…";
     $("runtime-state").textContent = "Loading…";
     try {
-      state.models = await api("api/models?limit=300");
+      state.models = await api("api/models?limit=300&availability=1");
       renderModels();
-      $("api-status").textContent = state.models.length + " models · WanGP API connected";
+      renderModelLinks();
+      const available = state.models.filter((model) => availabilityStatus(model) === "available").length;
+      const partial = state.models.filter((model) => availabilityStatus(model) === "partial").length;
+      $("api-status").textContent = state.models.length + " models · " + available + " available" +
+        (partial ? " · " + partial + " partial" : "") + " · WanGP API connected";
       $("runtime-state").textContent = "API ready";
       $("canvas-model-count").textContent = state.models.length + " models available";
     } catch (error) {

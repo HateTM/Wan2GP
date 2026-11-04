@@ -188,7 +188,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
     def __init__(self) -> None:
         super().__init__()
         self.name = "WanGP Studio"
-        self.version = "0.4.0"
+        self.version = "0.5.0"
         self.description = "Lightweight full-screen workspace for WanGP models, generation and workflows."
         self.type = ["app"]
         self._session = None
@@ -307,13 +307,14 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             family: str | None = None,
             inputs: str | None = None,
             output: str | None = None,
+            availability: int = 0,
             limit: int = 300,
             offset: int = 0,
         ):
             session = session_or_503()
             try:
                 return session.list_model_metadata(
-                    include_availability=False,
+                    include_availability=bool(availability),
                     include_selection=False,
                     query=q or None,
                     family=family or None,
@@ -324,6 +325,54 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 )
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=f"Could not read model catalog: {exc}") from exc
+
+        @app.get("/api/models/summary")
+        def models_summary():
+            session = session_or_503()
+            try:
+                records = session.list_model_metadata(include_availability=True, limit=1000)
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"Could not summarize the model catalog: {exc}") from exc
+
+            def is_available(record: dict) -> bool:
+                value = record.get("availability")
+                if isinstance(value, bool):
+                    return value
+                if isinstance(value, dict):
+                    status = str(value.get("status") or "").lower()
+                    if value.get("available") is True or value.get("ready") is True or status == "partial":
+                        return True
+                    if status == "missing" or value.get("available") is False:
+                        return False
+                return False
+
+            by_output: dict[str, dict[str, int]] = {}
+            by_family: dict[str, dict[str, int]] = {}
+            available = 0
+            for record in records:
+                outputs = record.get("outputs") or [record.get("main_output") or "other"]
+                if not isinstance(outputs, list):
+                    outputs = [outputs]
+                family = str(record.get("family_label") or record.get("family") or "other")
+                if is_available(record):
+                    available += 1
+                for output in outputs:
+                    key = str(output or "other")
+                    bucket = by_output.setdefault(key, {"total": 0, "available": 0})
+                    bucket["total"] += 1
+                    if is_available(record):
+                        bucket["available"] += 1
+                family_bucket = by_family.setdefault(family, {"total": 0, "available": 0})
+                family_bucket["total"] += 1
+                if is_available(record):
+                    family_bucket["available"] += 1
+            return {
+                "total": len(records),
+                "available": available,
+                "unavailable": len(records) - available,
+                "by_output": by_output,
+                "by_family": by_family,
+            }
 
         @app.get("/api/models/{model_type}")
         def get_model(model_type: str):

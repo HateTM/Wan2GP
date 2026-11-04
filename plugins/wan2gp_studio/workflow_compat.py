@@ -420,6 +420,16 @@ class WorkflowCompat:
             events = [event for event in record["events"] if event["id"] > cursor]
             return events, record["next_event"] - 1
 
+    def recent_runs(self, limit: int = 10) -> list[dict[str, Any]]:
+        with self._lock:
+            ids = self._run_order[-max(1, int(limit)):]
+        runs = []
+        for run_id in reversed(ids):
+            snapshot = self.snapshot(run_id)
+            if snapshot is not None:
+                runs.append(snapshot)
+        return runs
+
     def cancel(self, run_id: str) -> bool:
         with self._lock:
             record = self._runs.get(run_id)

@@ -20,6 +20,10 @@ body.gallery-mode .main-area{grid-template-rows:54px minmax(0,1fr) 26px}
 .button-danger:hover{background:#3a2229}
 .button-danger:disabled{opacity:.4;cursor:not-allowed}
 .gallery-selection[hidden],.gallery-drop[hidden],.gallery-empty[hidden]{display:none!important}
+.model-links{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;padding:6px 11px;border-top:1px solid var(--line-soft);background:#0f151d;overflow-x:auto}
+.model-link{flex:0 0 auto;padding:2px 6px;border:1px solid #2c3a4c;border-radius:4px;color:#9db4e6;font-size:8px;text-decoration:none}
+.model-link:hover{border-color:#4c6590;color:#c7d8fb}
+.model-links .field-note{flex:0 0 auto;margin:0}
 .workflow-frame{width:100%;height:100%;border:0;background:#0e141c;display:block}
 .workflow-canvas-host{position:relative;padding:0!important;overflow:hidden}
 .workflow-select{max-width:230px;height:24px;margin-left:8px;padding:0 6px;font-size:9px;vertical-align:middle}
