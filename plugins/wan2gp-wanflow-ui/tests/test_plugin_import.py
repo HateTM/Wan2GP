@@ -14,18 +14,13 @@ PLUGINS_ROOT = str(Path(__file__).resolve().parents[2])
 if PLUGINS_ROOT not in sys.path:
     sys.path.insert(0, PLUGINS_ROOT)
 
-
-def _runner_importable() -> bool:
-    try:
-        importlib.import_module("wan2gp-wanflow-ui.plugin")
-        return True
-    except Exception:
-        return False
-
+from cuda_gate import cuda_ready  # noqa: E402 - lives next to the tests
 
 # plugin_ui -> graph_runner -> mmgp touches CUDA at import time: on a
 # CPU-only torch build (the CI runner) these integration tests cannot run.
-_RUNNER_OK = _runner_importable()
+# When CUDA IS ready the marker is True even if the import is broken - the
+# tests then execute and FAIL, which is the point of the acceptance gate.
+_RUNNER_OK = cuda_ready()
 _NEEDS_CUDA = "needs a CUDA-enabled torch: the plugin import chain reaches mmgp"
 
 
