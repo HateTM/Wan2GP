@@ -701,26 +701,25 @@ class WorkflowCompat:
                 raise WorkflowLimitError(
                     f"Too many active workflow runs ({active}/{MAX_ACTIVE_RUNS}). Cancel one first."
                 )
-        run_id = uuid.uuid4().hex
-        record = {
-            "id": run_id,
-            "status": "running",
-            "progress": 0,
-            "message": "Starting workflow…",
-            "nodes": {
-                node["id"]: ("queued" if node.get("enabled", True) else "skipped")
-                for node in normalized.get("nodes") or []
-            },
-            "outputs": [],
-            "variables": {},
-            "errors": [],
-            "cancel_requested": False,
-            "created_at": time.time(),
-            "updated_at": time.time(),
-            "events": deque(maxlen=400),
-            "next_event": 1,
-        }
-        with self._lock:
+            run_id = uuid.uuid4().hex
+            record = {
+                "id": run_id,
+                "status": "running",
+                "progress": 0,
+                "message": "Starting workflow…",
+                "nodes": {
+                    node["id"]: ("queued" if node.get("enabled", True) else "skipped")
+                    for node in normalized.get("nodes") or []
+                },
+                "outputs": [],
+                "variables": {},
+                "errors": [],
+                "cancel_requested": False,
+                "created_at": time.time(),
+                "updated_at": time.time(),
+                "events": deque(maxlen=400),
+                "next_event": 1,
+            }
             self._runs[run_id] = record
             self._run_order.append(run_id)
             self._prune_runs()

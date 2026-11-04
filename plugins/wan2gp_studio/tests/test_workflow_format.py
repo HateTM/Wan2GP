@@ -65,9 +65,35 @@ class StubNodeRegistry:
 class StubBlockStore:
     def __init__(self, root):
         self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def slug(value):
+        return re.sub(r"[^a-zA-Z0-9_-]+", "-", str(value or "block")).strip("-_").lower()[:80] or "block"
+
+    def save_group(self, graph, group_id, name=None):
+        group = next((item for item in graph.get("groups") or [] if item.get("id") == group_id), None)
+        if not group:
+            raise ValueError("The selected group does not exist.")
+        title = str(name or group.get("title") or "Reusable block")
+        payload = {"schema": "wan2gp-wanflow-block-v1", "name": title, "nodes": [], "edges": [], "groups": [group]}
+        path = self.root / f"{self.slug(title)}.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def delete(self, block_id):
+        path = self.root / f"{self.slug(block_id)}.json"
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        path.unlink()
+        return path
 
     def catalog(self):
-        return []
+        out = []
+        for path in sorted(self.root.glob("*.json")):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            out.append({"id": path.stem, "name": data.get("name") or path.stem})
+        return out
 
 
 class StubHost:
@@ -248,6 +274,33 @@ def test_comfyui_ui_export_survives_edits(tmp_path):
     assert sampler["inputs"][0]["link"] == 1
     assert exported["links"] == _ui_payload()["links"]  # ui_meta carrier keeps the original links
     assert exported["version"] == 0.4
+
+
+def test_save_block_and_delete_block_api(tmp_path):
+    if GRAPH_MODEL is None:
+        pytest.skip("wanflow-ui not installed")
+    compat = _compat(tmp_path)
+    graph = {
+        "name": "Blocks",
+        "nodes": [
+            {"id": "n1", "type": "text_prompt", "params": {}, "enabled": True},
+            {"id": "n2", "type": "text_prompt", "params": {}, "enabled": True},
+        ],
+        "edges": [],
+        "groups": [{"id": "grp1", "title": "My Block", "node_ids": ["n1", "n2"]}],
+        "ui": {"selected_group_id": "grp1"},
+    }
+    saved = compat.save_block(graph)
+    assert saved == {"id": "my-block", "name": "My Block"}
+    assert compat.catalog()["blocks"] == [{"id": "my-block", "name": "My Block"}]
+
+    with pytest.raises(ValueError):
+        compat.save_block({"name": "No group selected"})
+    with pytest.raises(KeyError):
+        compat.delete_block("missing-block")
+
+    compat.delete_block("my-block")
+    assert compat.catalog()["blocks"] == []
 
 
 def test_export_import_routes_against_installed_plugin(tmp_path, monkeypatch):
