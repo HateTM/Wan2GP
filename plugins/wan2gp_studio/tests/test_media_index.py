@@ -257,10 +257,11 @@ def test_index_file_updates_directory_cache_for_upload(index, media_root):
 def test_delete_requires_known_id_and_respects_roots(index, media_root):
     assert index.delete("missing-id") is False
     item = index.query(q="plain.png")["items"][0]
-    assert index._inside_roots(item["path"]) is True
+    entry = index.get(item["id"])
+    assert index._inside_roots(entry["path"]) is True
     assert index._inside_roots(os.path.join(os.path.dirname(str(media_root)), "other.png")) is False
     assert index.delete(item["id"]) is True
-    assert not os.path.exists(item["path"])
+    assert not os.path.exists(entry["path"])
     assert index.stats()["total"] == 4
 
 
@@ -289,22 +290,52 @@ def test_symlink_escape_is_rejected(index, media_root, tmp_path):
 
 
 def test_scan_keeps_entries_indexed_during_the_walk(index, media_root):
-    """A background scan that started before index_file() must not drop it."""
-    live = {
-        "id": "live-entry", "path": str(media_root / "later.png"), "name": "later.png",
-        "relative": "later.png", "root": str(media_root), "kind": "image",
-        "size": 1, "mtime": 0.0, "mtime_ns": time.time_ns() + 10**9,
-    }
+    """A background scan that started before index_file() must not drop it.
+
+    The entry carries a generation above the scan's starting snapshot - the
+    state index_file() produces when it fires while the walk is in flight."""
     with index._lock:
-        index._entries["live-entry"] = live
+        generation = index._generation + 1  # index_file() during the walk
+        index._entries["live-entry"] = {
+            "id": "live-entry", "path": str(media_root / "later.png"), "name": "later.png",
+            "relative": "later.png", "root": str(media_root), "kind": "image",
+            "size": 1, "mtime": 0.0, "mtime_ns": time.time_ns() + 10**9,
+            "generation": generation,
+        }
     index._do_scan()  # walk cannot see later.png (it is not on disk)
     assert index.get("live-entry") is not None
+
+
+def test_full_scan_drops_deleted_file_with_future_mtime(index, media_root):
+    """A ghost whose mtime lies ahead of the clock must not survive its own
+    deletion: the index generation, not the file timestamp, decides."""
+    path = media_root / "future.png"
+    _make_png(path)
+    future = time.time() + 3600
+    os.utime(path, (future, future))
+    index.refresh(force=True)
+    assert index.query(q="future.png")["total"] == 1
+    path.unlink()
+    index.refresh(force=True)
+    assert index.query(q="future.png")["total"] == 0
+
+
+def test_list_cards_hide_absolute_paths(index):
+    """Bulk list responses carry no filesystem locations; the explicit detail
+    view (Copy path, lightbox) is the only card that includes root/path."""
+    listed = index.query()["items"][0]
+    assert "path" not in listed
+    assert "root" not in listed
+    detail = index.detail(index.get(listed["id"]))
+    assert detail["item"]["path"]
+    assert detail["item"]["root"]
 
 
 def test_thumbnail_bytes_use_shared_engine(index):
     pytest.importorskip("shared.deepy.thumbnails")
     from wan2gp_studio.media_index import thumbnail_bytes
 
-    image = index.query(q="plain.png")["items"][0]
-    data = thumbnail_bytes(image["path"])
+    item = index.query(q="plain.png")["items"][0]
+    entry = index.get(item["id"])
+    data = thumbnail_bytes(entry["path"])
     assert data and data[:2] == b"\xff\xd8"

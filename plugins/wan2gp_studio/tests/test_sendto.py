@@ -196,6 +196,36 @@ def test_targets_report_enabled_state(fake_plugins_root):
     assert all(target["enabled"] is False for target in other.targets())
 
 
+def test_create_rejects_disabled_plugin(fake_plugins_root, tmp_path):
+    """A disabled target must be refused at create() time, not only hidden in
+    the UI: the client chooses the slot, so the API is the last gate."""
+    registry = _registry(fake_plugins_root, is_enabled=lambda plugin_id: False)
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(_png_bytes())
+    with pytest.raises(SendToError) as disabled:
+        registry.create(str(frame), "image", "ImageSuite-Wan2GP", "img2img")
+    assert disabled.value.status_code == 409
+    assert "disabled" in disabled.value.detail
+    assert registry.pending() == 0
+
+
+def test_bridge_refuses_handoff_for_disabled_plugin(fake_plugins_root, tmp_path):
+    """Delivery-time re-check: a hand-off parked while the plugin was enabled
+    must not reach an inbox after the plugin was disabled."""
+    registry = _registry(fake_plugins_root)
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(_png_bytes())
+    handoff = registry.create(str(frame), "image", "ImageSuite-Wan2GP", "img2img")
+    plugin = WanGPStudioPlugin()
+    plugin._sendto = registry
+    plugin._plugin_enabled = lambda plugin_id: False  # type: ignore[method-assign]
+    state: dict = {}
+    _, status = plugin._apply_sendto_handoff(state, handoff.handoff_id)
+    assert status == "disabled"
+    assert state == {}  # nothing was appended to any inbox
+    assert registry.status(handoff.handoff_id) == "consumed"  # one-shot still holds
+
+
 # -- HTTP routes ---------------------------------------------------------------
 
 

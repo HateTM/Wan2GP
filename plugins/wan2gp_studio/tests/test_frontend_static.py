@@ -93,4 +93,6 @@ def test_canvas_messages_are_origin_checked():
 def test_version_strings_are_consistent():
     info = json.loads(_read(os.path.join(PLUGIN_DIR, "plugin_info.json")))
     html = _read(HTML)
-    assert f'WanGP Studio <b>{info["version"]}</b>' in html
+    version = info["version"]
+    assert f'WanGP Studio <b>{version}</b>' in html  # footer
+    assert f'<span class="user-button">{version}</span>' in html  # topbar

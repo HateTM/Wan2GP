@@ -187,6 +187,11 @@ class MediaIndex:
         self._scan_lock = threading.Lock()
         self._first_scan = threading.Event()
         self._entries: dict[str, dict[str, Any]] = {}
+        #: Bumped every time index_file() inserts a live entry; a scan compares
+        #: its starting generation against this to tell concurrent insertions
+        #: (keep) from stale ghosts (drop) without trusting file mtimes, which
+        #: follow the storage clock and may even sit in the future.
+        self._generation = 0
         self._fact_cache: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
         #: Directory key -> {"mtime_ns", "entries", "subdirs"} for incremental scans.
         self._dir_cache: dict[str, dict[str, Any]] = {}
@@ -353,7 +358,8 @@ class MediaIndex:
         entries: dict[str, dict[str, Any]] = {}
         counters = {"visited": 0, "reused": 0, "files": 0}
         seen_dirs: set[str] = set()
-        scan_started_ns = time.time_ns()
+        with self._lock:
+            scan_generation = self._generation
         started_at = time.perf_counter()
         for root in self.roots():
             stack = [root]
@@ -367,9 +373,11 @@ class MediaIndex:
         with self._lock:
             # A file indexed while this walk was in flight (e.g. index_file
             # after an upload) may postdate the walk's visit of its directory;
-            # keep live entries that appeared after the scan started.
+            # keep live entries inserted after the scan started. Everything
+            # else the walk could not see is gone from disk and must be
+            # dropped, even when its mtime lies in the future.
             for media_id, entry in self._entries.items():
-                if media_id not in entries and entry["mtime_ns"] >= scan_started_ns:
+                if media_id not in entries and entry.get("generation", 0) > scan_generation:
                     entries[media_id] = entry
             self._entries = entries
             self._scanned_at = time.time()
@@ -423,6 +431,8 @@ class MediaIndex:
         }
         parent = os.path.dirname(path)
         with self._lock:
+            self._generation += 1
+            entry["generation"] = self._generation
             self._entries[entry_id] = entry
             self._fact_cache.pop(entry_id, None)
             cached = self._dir_cache.get(os.path.normcase(parent))
@@ -478,11 +488,14 @@ class MediaIndex:
         return facts
 
     # -- read models ---------------------------------------------------
-    def card(self, entry: dict[str, Any]) -> dict[str, Any]:
-        payload = {
-            key: entry[key]
-            for key in ("id", "kind", "name", "relative", "root", "size", "mtime", "path")
-        }
+    def card(self, entry: dict[str, Any], *, include_path: bool = False) -> dict[str, Any]:
+        """DTO for one media item. Absolute filesystem locations stay out of
+        the bulk list responses: callers that show a single item explicitly
+        (detail view, upload answer) pass ``include_path=True``."""
+        keys = ("id", "kind", "name", "relative", "size", "mtime")
+        if include_path:
+            keys += ("root", "path")
+        payload = {key: entry[key] for key in keys}
         payload.update(parse_filename(entry["name"]))
         payload.update(self.facts(entry))
         return payload
@@ -530,7 +543,12 @@ class MediaIndex:
         }
 
     def detail(self, entry: dict[str, Any]) -> dict[str, Any]:
-        payload: dict[str, Any] = {"item": self.card(entry), "metadata": None, "world": None, "links": []}
+        payload: dict[str, Any] = {
+            "item": self.card(entry, include_path=True),
+            "metadata": None,
+            "world": None,
+            "links": [],
+        }
         kind = entry["kind"]
         path = entry["path"]
         try:

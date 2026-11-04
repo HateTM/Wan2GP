@@ -425,6 +425,10 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         handoff = self._sendto.take(handoff_id)
         if handoff is None:
             return state, "expired"
+        # Delivery-time re-check: the plugin may have been disabled (or
+        # uninstalled) between create() and the bridge firing.
+        if not self._plugin_enabled(handoff.plugin):
+            return state, "disabled"
         if not os.path.isfile(handoff.path):
             return state, "missing-file"
         if not inbox_append(state, handoff.inbox_key, handoff.path, handoff.slot):
@@ -757,7 +761,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             entry = media_index.index_file(destination)
             if entry is None:
                 raise HTTPException(status_code=500, detail="Uploaded file was not indexed.")
-            return {"item": media_index.card(entry)}
+            return {"item": media_index.card(entry, include_path=True)}
 
         @app.get("/api/media/{media_id}/file")
         def media_file(media_id: str):

@@ -314,21 +314,33 @@
     return state.sendTargets;
   }
 
-  function renderSendTargets(targets) {
+  // Targets the current lightbox item can actually use: the plugin must be
+  // enabled and its manifest "accepts" list must cover the item kind, so the
+  // button never offers a send the server would refuse with HTTP 400.
+  function usableSendTargets() {
+    const item = state.detail && state.detail.item;
+    const kind = item && item.kind;
+    return (state.sendTargets || []).filter((target) => {
+      if (target.enabled === false) return false;
+      const accepts = Array.isArray(target.accepts) ? target.accepts : [];
+      return accepts.length === 0 || !kind || accepts.indexOf(kind) !== -1;
+    });
+  }
+
+  function renderSendTargets() {
     const select = $("lightbox-suite-target");
     const previous = select.value;
+    const targets = usableSendTargets();
     select.replaceChildren();
     for (const target of targets) {
       const option = document.createElement("option");
       option.value = target.plugin + "|" + target.slot;
       option.textContent = (target.plugin_label || target.plugin) + " · " + (target.label || target.slot);
-      if (target.enabled === false) {
-        option.textContent += " (disabled)";
-        option.disabled = true;
-      }
       select.appendChild(option);
     }
-    if (previous) select.value = previous;
+    if (previous && targets.some((target) => target.plugin + "|" + target.slot === previous)) {
+      select.value = previous;
+    }
     select.hidden = targets.length === 0;
   }
 
@@ -341,17 +353,20 @@
     const copy = $("lightbox-suite-copy");
     if (!button) return;
     const plugin = imageSuitePlugin();
-    const hasTargets = (state.sendTargets || []).length > 0;
-    button.disabled = !hasTargets || !sendBridgeAvailable();
-    if (!hasTargets) {
-      button.textContent = plugin && plugin.state === "not_installed" ? "No SendTo plugin" : "No SendTo target";
+    const anyTargets = (state.sendTargets || []).length > 0;
+    const usable = usableSendTargets();
+    button.disabled = usable.length === 0 || !sendBridgeAvailable();
+    if (usable.length === 0) {
+      button.textContent = !anyTargets
+        ? (plugin && plugin.state === "not_installed" ? "No SendTo plugin" : "No SendTo target")
+        : "No target for this file";
     } else if (!sendBridgeAvailable()) {
       button.textContent = "Bridge unavailable";
     } else {
       button.textContent = "Send";
     }
     if (copy) copy.hidden = !(state.detail && state.detail.item);
-    if (plugin && plugin.state && plugin.state !== "enabled" && hasTargets) {
+    if (plugin && plugin.state && plugin.state !== "enabled" && usable.length > 0) {
       button.title = plugin.state === "disabled"
         ? "Image Suite is installed but disabled in the WanGP Plugin Manager."
         : "Target plugin state: " + plugin.state;
@@ -378,9 +393,22 @@
     const select = $("lightbox-suite-target");
     const [plugin, slot] = String(select.value || "").split("|");
     if (!plugin || !slot) {
-      toast("No SendTo target is installed. Install Image Suite from the WanGP Plugin Manager.", true);
+      const anyTargets = (state.sendTargets || []).length > 0;
+      toast(anyTargets
+        ? "No installed SendTo target accepts this " + (KIND_LABEL[item.kind] || item.kind) + "."
+        : "No SendTo target is installed. Install Image Suite from the WanGP Plugin Manager.", true);
       return;
     }
+    // window.open must run inside the user gesture: browsers drop transient
+    // activation across the awaits below, and with "noopener" it always
+    // returns null, so a blocked popup could not be told from a success.
+    const opened = window.open("", "_blank");
+    if (!opened) {
+      toast("Popup blocked. Allow popups for this page, then retry the send.", true);
+      return;
+    }
+    try { opened.opener = null; } catch (_) {}
+    const closeTab = () => { try { opened.close(); } catch (_) {} };
     let payload;
     try {
       payload = await api("api/media/" + encodeURIComponent(item.id) + "/sendto", {
@@ -388,20 +416,18 @@
         body: JSON.stringify({ plugin, slot })
       });
     } catch (error) {
+      closeTab();
       toast(error.message, true);
       return;
     }
     if (payload.bridge === false) {
+      closeTab();
       toast("The WanGP SendTo bridge is not loaded. Restart WanGP, then retry.", true);
       return;
     }
-    const opened = window.open(payload.url, "_blank", "noopener");
     const target = payload.handoff || {};
     const label = (target.plugin_label || plugin) + (target.slot_label ? " · " + target.slot_label : "");
-    if (!opened) {
-      toast("Popup blocked. Open " + window.location.origin + payload.url + " to finish the send to " + label + ".", true);
-      return;
-    }
+    opened.location.replace(new URL(payload.url, window.location.href).href);
     toast("Opening WanGP to send this frame to " + label + "…");
   }
 
@@ -486,8 +512,8 @@
     download.setAttribute("download", item.name || "media");
     ensureEnvironment().then(updateSuiteButton).catch(() => {});
     ensureSendTargets()
-      .then((targets) => {
-        renderSendTargets(targets);
+      .then(() => {
+        renderSendTargets();
         updateSuiteButton();
       })
       .catch(() => {});

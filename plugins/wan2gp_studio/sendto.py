@@ -324,6 +324,11 @@ class SendToRegistry:
         manifest = self.manifest(plugin_id)
         if manifest is None:
             raise SendToError(409, f"Plugin '{plugin_id}' is not installed or does not accept sends.")
+        # The API listing may already know the plugin is disabled, but the
+        # choice arrives from the client: refuse here instead of parking a
+        # hand-off whose bridge delivery can only fail.
+        if not self._plugin_enabled(manifest.plugin):
+            raise SendToError(409, f"{manifest.plugin_label} is disabled in the WanGP Plugin Manager.")
         slot_label = manifest.slot_label(slot)
         if slot_label is None:
             raise SendToError(
