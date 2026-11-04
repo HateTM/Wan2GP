@@ -14,12 +14,12 @@
   {
     "name": "Finetune Manager",
     "author": "GKartist75",
-    "version": "3.6.3",
+    "version": "4.0.1",
     "description": "Community finetune registry: browse, load, create, edit, improve, and upload finetune JSONs for Wan2GP",
     "type": [
       "app"
     ],
-    "date": "2026-07-22",
+    "date": "2026-10-27",
     "wan2gp_version": "12.3",
     "url": "https://github.com/GKartist75/Wan2GP-finetune-manager"
   },
@@ -39,7 +39,7 @@
     "name": "Image Suite",
     "author": "saintorphan",
     "version": "0.3.0",
-    "description": "Image workbench: Txt2Img, Img2Img, MultiCanvas (layered draw / mask / inpaint) and a Modify editor (crop / resize / flip / colour) for Flux, Z-Image and the SDXL lineup (Pony, Illustrious). Save any result to the other pages, Img2Vid, the Prompt Library, disk \u2014 or, with the SendTo plugin, to other tabs and plugins.",
+    "description": "Image workbench: Txt2Img, Img2Img, MultiCanvas (layered draw / mask / inpaint) and a Modify editor (crop / resize / flip / colour) for Flux, Z-Image and the SDXL lineup (Pony, Illustrious). Save any result to the other pages, Img2Vid, the Prompt Library, disk — or, with the SendTo plugin, to other tabs and plugins.",
     "type": [
       "app"
     ],
@@ -59,7 +59,7 @@
     ],
     "defaults": "./defaults",
     "profiles": "./profiles",
-	"url": "https://github.com/totideyouover2026-max/wan2gp-krea2-identity-edit"
+    "url": "https://github.com/totideyouover2026-max/wan2gp-krea2-identity-edit"
   },
   {
     "name": "LTX Director",
@@ -128,17 +128,17 @@
     "description": "Connects a local WanGP workstation to Midom as a scoped project media worker for curated image, audio, music, video, and local media-processing jobs.",
     "date": "2026-08-20",
     "wan2gp_version": "",
-	"url": "https://github.com/bsenftner/midom-wangp-bridge-plugin/"
+    "url": "https://github.com/bsenftner/midom-wangp-bridge-plugin/"
   },
   {
     "name": "MiniMax H3 Prompt Builder",
     "author": "JedsDeadBaby",
-    "version": "2.0.0",
+    "version": "4.1.0",
     "description": "Builds MiniMax H3 prompts. Base modes write the three-field schema, a reference-mode switch writes the six-section Ref2VA format, and start/end image checkboxes add the keyframe instruction line. A button in the Audio section hands the scene to WanGP's Prompt Enhancer and has it write the soundscape and score. Beats can be action, dialogue or voiceover, with the spec's required voiceover phrasing and closed-lips clause written for you; <scenetrans> is marked at both sides of a cut with the continuity stated in words, and <cutoff> marks speech the clip ends mid-line. Per-shot on-screen text is quoted verbatim. Character creator per subject composes a physical description from name, ethnicity, gender, age, height, build, hair, eyes and clothing. Sliding-window support, combined cast and subjects list, ordered beats with intra-shot timing, per-shot lens and rig, and audio references for voice, ambience and score.",
     "type": [
       "extension"
     ],
-    "date": "2026-08-19",
+    "date": "2026-10-30",
     "url": "https://github.com/jedsdead/Wan2GP-Minimax-H3-Prompt-Builder",
     "wan2gp_version": "1.0"
   },
@@ -157,9 +157,11 @@
   {
     "name": "MiniMax H3 RefMods",
     "author": "ported for Wan2GP by community, original concept by Luisa (luisacaotica/ComfyUI-MiniMaxH3Mod)",
-    "version": "0.22.0",
+    "version": "0.42.0",
     "description": "No-training 'reference mods' for MiniMax H3 Ref2VA: compress an image/video reference into a small .safetensors file once, then reuse it at any strength without re-encoding it every generation.",
-    "type": ["app"],
+    "type": [
+      "app"
+    ],
     "date": "2026-08-19",
     "wan2gp_version": "",
     "url": "https://github.com/g3n3rativ3/MiniMaxH3Mod-for-WanGP"
@@ -201,7 +203,7 @@
   {
     "name": "Prompt Library",
     "author": "saintorphan",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "Standalone, model-agnostic prompt library in the Media Generation tab: save / update / populate / delete prompts, optionally preserving every generation parameter, each tagged with the model selected when it was saved.",
     "type": [
       "extension"
@@ -273,10 +275,10 @@
   {
     "name": "Status Pro",
     "author": "totideyouover2026-max",
-    "version": "1.0.2",
+    "version": "1.3.1",
     "description": "Persistent generation status, per-step performance and memory telemetry, queue-aware history, exports, live ETA, and plugin-only download telemetry.",
     "type": "extension",
-    "date": "2026-08-15",
+    "date": "2026-11-03",
     "wan2gp_version": "",
     "url": "https://github.com/totideyouover2026-max/wan2gp-status-pro"
   },
@@ -315,8 +317,7 @@
     "date": "",
     "wan2gp_version": "",
     "url": "https://github.com/deepbeepmeep/wan2gp-blender-upsampler"
-  }
-,
+  },
   {
     "name": "H3 Director",
     "author": "The-ShadowWalker",
