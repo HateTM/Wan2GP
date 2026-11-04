@@ -37,7 +37,13 @@ jobs:
             "pillow==11.3.0" \
             "psutil==7.2.2" \
             "pytest==9.1.1" \
-            "mutagen==1.48.1"
+            "mutagen==1.48.1" \
+            "accelerate>=1.1.1" \
+            "optimum-quanto==0.2.7" \
+            "transformers==4.54.0" \
+            "safetensors" \
+            "filelock" \
+            "comfy-kitchen==0.2.35"
       - name: Run Studio tests
         env:
           WANFLOW_UI_REQUIRED: "1"
@@ -79,7 +85,13 @@ jobs:
             "pillow==11.3.0" \
             "psutil==7.2.2" \
             "pytest==9.1.1" \
-            "mutagen==1.48.1"
+            "mutagen==1.48.1" \
+            "accelerate>=1.1.1" \
+            "optimum-quanto==0.2.7" \
+            "transformers==4.54.0" \
+            "safetensors" \
+            "filelock" \
+            "comfy-kitchen==0.2.35"
       - name: Install WanFlow UI
         run: git clone --depth 1 --branch "${{ vars.WANFLOW_UI_REF || 'main' }}" "${{ vars.WANFLOW_UI_REPO }}" plugins/wan2gp-wanflow-ui
       - name: Run Studio tests against real WanFlow
