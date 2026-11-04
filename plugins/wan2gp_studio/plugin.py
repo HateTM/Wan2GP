@@ -6,6 +6,7 @@ binds this plugin to the already-running WanGP WebUI queue and runtime.
 """
 import asyncio
 import json
+import os
 import threading
 import time
 import uuid
@@ -16,7 +17,51 @@ from typing import Any
 
 from shared.utils.plugins import WAN2GPPlugin
 
-from .media_index import MediaIndex, thumbnail_bytes
+from .media_index import (
+    AUDIO_EXTENSIONS,
+    IMAGE_EXTENSIONS,
+    VIDEO_EXTENSIONS,
+    WORLD_EXTENSIONS,
+    MediaIndex,
+    media_id_for,
+    thumbnail_bytes,
+)
+
+
+MEDIA_UPLOAD_MAX_BYTES = 512 * 1024 * 1024
+_ILLEGAL_FILENAME_CHARACTERS = str.maketrans({character: "_" for character in '\\/:*?"<>|'})
+_MEDIA_MIME_TYPES = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+    ".bmp": "image/bmp", ".tif": "image/tiff", ".tiff": "image/tiff",
+    ".mp4": "video/mp4", ".m4v": "video/mp4", ".mkv": "video/x-matroska", ".webm": "video/webm",
+    ".mov": "video/quicktime", ".avi": "video/x-msvideo",
+    ".wav": "audio/wav", ".mp3": "audio/mpeg", ".flac": "audio/flac", ".ogg": "audio/ogg",
+    ".opus": "audio/opus", ".m4a": "audio/mp4", ".aac": "audio/aac",
+    ".wgpworld": "application/zip", ".wgpapp": "application/zip",
+}
+
+
+def _safe_upload_name(filename: str, extension: str) -> str:
+    name = os.path.basename((filename or "").replace("\\", "/"))
+    stem = os.path.splitext(name)[0] or "upload"
+    stem = stem.translate(_ILLEGAL_FILENAME_CHARACTERS)
+    stem = "".join(character for character in stem if ord(character) >= 32).strip(" .")
+    if not stem:
+        stem = "upload"
+    return stem[:120] + extension
+
+
+def _unique_destination(directory: str, name: str) -> str:
+    candidate = os.path.join(directory, name)
+    if not os.path.exists(candidate):
+        return candidate
+    stem, extension = os.path.splitext(name)
+    counter = 1
+    while True:
+        candidate = os.path.join(directory, f"{stem} ({counter}){extension}")
+        if not os.path.exists(candidate):
+            return candidate
+        counter += 1
 
 
 class _JobRecord:
@@ -188,7 +233,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         return roots
 
     def create_web_app(self):
-        from fastapi import FastAPI, HTTPException, Request
+        from fastapi import FastAPI, File, HTTPException, Request, UploadFile
         from fastapi.responses import FileResponse, Response, StreamingResponse
         from fastapi.staticfiles import StaticFiles
         from starlette.concurrency import run_in_threadpool
@@ -367,6 +412,72 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=f"Could not delete the media file: {exc}") from exc
             return {"deleted": media_id, "name": entry["name"]}
+
+        @app.post("/api/media/upload")
+        async def upload_media(file: UploadFile = File(...)):
+            extension = os.path.splitext(file.filename or "")[1].lower()
+            if extension in IMAGE_EXTENSIONS:
+                kind = "image"
+            elif extension in VIDEO_EXTENSIONS:
+                kind = "video"
+            elif extension in AUDIO_EXTENSIONS:
+                kind = "audio"
+            else:
+                raise HTTPException(status_code=400, detail=f"Unsupported media type: {extension or 'unknown'}")
+            config = getattr(self, "server_config", None)
+            if not isinstance(config, dict):
+                config = {}
+            folder_key = {"image": "image_save_path", "video": "save_path", "audio": "audio_save_path"}[kind]
+            target_dir = config.get(folder_key) or config.get("save_path")
+            if not isinstance(target_dir, str) or not target_dir.strip():
+                raise HTTPException(status_code=500, detail="WanGP output folder is not configured.")
+            target_dir = os.path.abspath(os.path.expanduser(target_dir.strip()))
+            os.makedirs(target_dir, exist_ok=True)
+            destination = _unique_destination(target_dir, _safe_upload_name(file.filename, extension))
+            temp_path = os.path.join(target_dir, f".upload-{uuid.uuid4().hex}.tmp")
+            written = 0
+            try:
+                with open(temp_path, "wb") as handle:
+                    while True:
+                        chunk = await file.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        written += len(chunk)
+                        if written > MEDIA_UPLOAD_MAX_BYTES:
+                            raise HTTPException(status_code=413, detail="File is larger than 512 MB")
+                        handle.write(chunk)
+                os.replace(temp_path, destination)
+            except HTTPException:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                raise
+            except Exception as exc:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                raise HTTPException(status_code=500, detail=f"Could not store the uploaded file: {exc}") from exc
+            media_index.refresh(force=True)
+            entry = media_index.get(media_id_for(destination))
+            if entry is None:
+                raise HTTPException(status_code=500, detail="Uploaded file was not indexed.")
+            return {"item": media_index.card(entry)}
+
+        @app.get("/api/media/{media_id}/file")
+        def media_file(media_id: str):
+            media_index.refresh()
+            entry = media_index.get(media_id)
+            if entry is None:
+                raise HTTPException(status_code=404, detail="Media item not found.")
+            path = entry["path"]
+            if not media_index._inside_roots(path):
+                raise HTTPException(status_code=403, detail="Media file is outside the indexed roots.")
+            extension = os.path.splitext(path)[1].lower()
+            media_type = _MEDIA_MIME_TYPES.get(extension, "application/octet-stream")
+            return FileResponse(
+                path,
+                media_type=media_type,
+                filename=entry["name"],
+                content_disposition_type="inline",
+            )
 
         @app.get("/api/jobs")
         def list_jobs():

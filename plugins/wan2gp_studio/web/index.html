@@ -7,6 +7,7 @@
   <title>WanGP Studio</title>
   <link rel="stylesheet" href="assets/studio.css">
   <script src="assets/studio.js" defer></script>
+  <script src="assets/gallery.js" defer></script>
 </head>
 <body>
 <div class="app-shell">
@@ -14,9 +15,9 @@
     <a class="brand" href="/studio/"><span class="brand-mark">W</span><span><strong>WanGP</strong><small>STUDIO</small></span></a>
     <div class="sidebar-label">WORKSPACE</div>
     <nav class="primary-nav">
-      <button class="nav-item active"><span class="nav-icon">⌘</span> Workflow</button>
+      <button class="nav-item active" id="nav-workflow"><span class="nav-icon">⌘</span> Workflow</button>
       <button class="nav-item" id="nav-models"><span class="nav-icon">◈</span> Models</button>
-      <button class="nav-item" disabled><span class="nav-icon">▧</span> Gallery <span class="nav-soon">NEXT</span></button>
+      <button class="nav-item" id="nav-gallery"><span class="nav-icon">▧</span> Gallery <span class="nav-count" id="gallery-nav-count" hidden></span></button>
       <button class="nav-item" disabled><span class="nav-icon">◷</span> History <span class="nav-soon">NEXT</span></button>
     </nav>
     <div class="sidebar-label section-gap">MODEL TYPES</div>
@@ -38,7 +39,7 @@
 
   <main class="main-area">
     <header class="topbar">
-      <div class="breadcrumbs"><span>Workspace</span><span class="crumb-sep">/</span><strong>Workflow</strong></div>
+      <div class="breadcrumbs"><span>Workspace</span><span class="crumb-sep">/</span><strong id="breadcrumb-current">Workflow</strong></div>
       <div class="top-actions"><span class="runtime-pill"><i></i> WanGP runtime</span><button class="icon-button" id="refresh-models" title="Refresh model catalog">↻</button><span class="user-button">0.1</span></div>
     </header>
 
@@ -103,13 +104,83 @@
       </div>
     </section>
 
+    <section class="gallery-view" id="gallery-view" hidden>
+      <header class="gallery-head">
+        <div><div class="eyebrow">MEDIA CENTER</div><h1>Library</h1><p id="gallery-summary">Indexing WanGP outputs…</p></div>
+        <div class="gallery-head-actions">
+          <button class="button button-quiet" id="gallery-upload">＋ Upload</button>
+          <input type="file" id="gallery-file" multiple hidden accept="image/*,video/*,audio/*">
+          <button class="button button-quiet" id="gallery-refresh">↻ Rescan</button>
+        </div>
+      </header>
+      <div class="gallery-toolbar">
+        <label class="search-box gallery-search"><span>⌕</span><input id="gallery-query" type="search" placeholder="Search prompt or file name…"></label>
+        <div class="filter-row" id="gallery-kinds">
+          <button class="filter-chip selected" data-kind="">All</button>
+          <button class="filter-chip" data-kind="image">Images</button>
+          <button class="filter-chip" data-kind="video">Videos</button>
+          <button class="filter-chip" data-kind="audio">Audio</button>
+          <button class="filter-chip" data-kind="world">Worlds</button>
+          <button class="filter-chip" data-kind="3d">3D</button>
+        </div>
+        <select id="gallery-sort" class="preset-select gallery-sort" aria-label="Sort media">
+          <option value="date_desc">Newest first</option>
+          <option value="date_asc">Oldest first</option>
+          <option value="name_asc">Name A→Z</option>
+          <option value="name_desc">Name Z→A</option>
+          <option value="size_desc">Largest first</option>
+          <option value="size_asc">Smallest first</option>
+        </select>
+        <button class="button button-quiet" id="gallery-select-mode">Select</button>
+      </div>
+      <div class="gallery-selection" id="gallery-selection" hidden>
+        <span id="gallery-selected-count">0 selected</span>
+        <button class="button button-quiet" id="gallery-clear-selection">Clear</button>
+        <button class="button button-danger" id="gallery-delete-selected">Delete selected</button>
+      </div>
+      <div class="gallery-viewport" id="gallery-viewport" tabindex="0" aria-label="Media library">
+        <div class="gallery-spacer" id="gallery-spacer"></div>
+        <div class="gallery-window" id="gallery-window"></div>
+        <div class="gallery-empty" id="gallery-empty" hidden></div>
+        <div class="gallery-drop" id="gallery-drop" hidden><div><strong>Drop media to upload</strong><span>Images, videos and audio are copied into the WanGP output folders.</span></div></div>
+      </div>
+    </section>
+
     <section class="queue-panel">
       <div class="queue-heading"><div class="queue-title"><span class="panel-kicker">EXECUTION</span><h2>Studio tasks <span id="queue-count">0</span></h2></div><div class="queue-actions"><span class="queue-runtime"><i></i> Submitted to native queue</span><button class="small-tool" id="refresh-queue">↻</button></div></div>
       <div class="queue-list" id="queue-list"><div class="queue-empty">No Studio jobs yet. Run a model to see execution progress here.</div></div>
     </section>
-    <footer class="main-footer"><span>WanGP Studio <b>0.1.0</b> · Powered by WanGP</span><span id="api-status">Connecting to local runtime…</span></footer>
+    <footer class="main-footer"><span>WanGP Studio <b>0.1.1</b> · Powered by WanGP</span><span id="api-status">Connecting to local runtime…</span></footer>
   </main>
 </div>
+
+<dialog class="lightbox" id="lightbox">
+  <div class="lightbox-shell">
+    <header class="lightbox-head">
+      <div class="lightbox-title"><span class="panel-kicker" id="lightbox-kind">MEDIA</span><strong id="lightbox-name">Item</strong></div>
+      <div class="lightbox-head-actions">
+        <a class="button button-quiet" id="lightbox-download" href="#" download>Download</a>
+        <button class="icon-button" id="lightbox-close" title="Close">✕</button>
+      </div>
+    </header>
+    <div class="lightbox-body">
+      <div class="lightbox-stage" id="lightbox-stage"></div>
+      <aside class="lightbox-meta">
+        <div class="lightbox-facts" id="lightbox-facts"></div>
+        <div class="lightbox-prompt-block">
+          <div class="section-title"><span>PROMPT</span><button id="lightbox-copy">Copy</button></div>
+          <p class="lightbox-prompt" id="lightbox-prompt">—</p>
+        </div>
+        <div class="lightbox-actions">
+          <button class="button button-primary" id="lightbox-reuse">Use settings</button>
+          <button class="button button-danger" id="lightbox-delete">Delete</button>
+        </div>
+        <p class="field-note" id="lightbox-path"></p>
+      </aside>
+    </div>
+  </div>
+</dialog>
+
 <div class="toast-region" id="toast-region" aria-live="polite"></div>
 </body>
 </html>

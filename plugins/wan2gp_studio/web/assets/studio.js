@@ -1,6 +1,6 @@
 (() => {
   "use strict";
-  const state = { models: [], selectedModel: null, modelDetail: null, currentSettings: null, filter: "all", query: "", jobs: new Map(), eventSources: new Map(), zoom: 100 };
+  const state = { models: [], selectedModel: null, modelDetail: null, currentSettings: null, filter: "all", query: "", jobs: new Map(), eventSources: new Map(), zoom: 100, view: "workflow" };
   const $ = (id) => document.getElementById(id);
   const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -308,6 +308,17 @@
     renderModels();
   }
 
+  function setView(view) {
+    const gallery = view === "gallery";
+    state.view = view;
+    document.body.classList.toggle("gallery-mode", gallery);
+    $("gallery-view").hidden = !gallery;
+    $("nav-gallery").classList.toggle("active", gallery);
+    $("nav-workflow").classList.toggle("active", !gallery);
+    $("breadcrumb-current").textContent = gallery ? "Gallery" : "Workflow";
+    if (gallery && window.WanGPStudioGallery) window.WanGPStudioGallery.activate();
+  }
+
   function bindEvents() {
     $("model-search").addEventListener("input", (event) => { state.query = event.target.value; renderModels(); });
     $("model-filters").addEventListener("click", (event) => {
@@ -362,10 +373,14 @@
     });
     $("zoom-in").addEventListener("click", () => updateZoom(10));
     $("zoom-out").addEventListener("click", () => updateZoom(-10));
+    $("nav-workflow").addEventListener("click", () => setView("workflow"));
+    $("nav-gallery").addEventListener("click", () => setView("gallery"));
     $("nav-models").addEventListener("click", () => $("model-search").focus());
     document.addEventListener("keydown", (event) => {
       if (event.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) {
-        event.preventDefault(); $("model-search").focus();
+        event.preventDefault();
+        if (state.view === "gallery") $("gallery-query").focus();
+        else $("model-search").focus();
       }
     });
   }
@@ -375,6 +390,12 @@
     $("zoom-value").textContent = state.zoom + "%";
     $("workflow-canvas").style.backgroundSize = (18 * state.zoom / 100) + "px " + (18 * state.zoom / 100) + "px";
   }
+
+  window.WanGPStudio = {
+    api, esc, toast, setView,
+    selectModel: (modelType) => selectModel(modelType),
+    getView: () => state.view
+  };
 
   async function init() {
     bindEvents();

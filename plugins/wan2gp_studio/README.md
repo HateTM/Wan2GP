@@ -48,6 +48,8 @@ The first frontend is deliberately a lightweight bootstrap. The visual node canv
 - GET /studio/api/media/roots (scan stats and the roots being indexed)
 - GET /studio/api/media/{media_id} (file facts and embedded metadata; Worlds add a manifest summary)
 - GET /studio/api/media/{media_id}/thumbnail (JPEG from the shared Deepy thumbnail engine)
+- GET /studio/api/media/{media_id}/file (streams the original file for previews and downloads)
+- POST /studio/api/media/upload (multipart `file`; copies into the matching WanGP output root)
 - DELETE /studio/api/media/{media_id}?confirm=true (removes the file and its .json sidecar)
 
 ## WanGP attribution
