@@ -571,6 +571,7 @@
     $("lightbox-prompt").textContent = prompt || "—";
     $("lightbox-path").textContent = item.path || "";
     $("lightbox-reuse").disabled = !((metadata && metadata.model_type) || item.model_type);
+    $("lightbox-usewf").hidden = !["image", "video", "audio"].includes(item.kind);
     const download = $("lightbox-download");
     download.setAttribute("href", fileUrl);
     download.setAttribute("download", item.name || "media");
@@ -596,6 +597,20 @@
     const dialog = $("lightbox");
     if (dialog.open) dialog.close();
     state.detail = null;
+  }
+
+  function useInWorkflow() {
+    if (!state.detail) return;
+    const item = state.detail.item || {};
+    if (!["image", "video", "audio"].includes(item.kind)) return;
+    closeLightbox();
+    S.setView("workflow");
+    const added = window.WanGPStudioCanvas && window.WanGPStudioCanvas.addMediaInput
+      ? window.WanGPStudioCanvas.addMediaInput(item.kind, item.path)
+      : false;
+    toast(added
+      ? "Added an input node with this file to the workflow canvas."
+      : "The workflow canvas is unavailable.", !added);
   }
 
   async function reuseSettings() {
@@ -850,6 +865,7 @@
     $("lightbox-delete").addEventListener("click", () => {
       if (state.detail) deleteMedia([state.detail.item.id], state.detail.item.name);
     });
+    $("lightbox-usewf").addEventListener("click", useInWorkflow);
     updateSelectionBar();
   }
 

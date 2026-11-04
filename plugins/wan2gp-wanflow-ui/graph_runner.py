@@ -857,11 +857,21 @@ def run_graph(plugin, api_session, main_state: dict[str, Any], graph: dict[str, 
         if reused:
             pass
         elif node_type in {"input_image", "input_video", "input_audio", "input_mask_image", "input_mask_video", "load_media"}:
-            slot = int(_number(params.get("slot"), auto_input_slot))
-            auto_input_slot = max(auto_input_slot + 1, slot + 1)
-            if slot >= len(runtime_paths):
-                raise ValueError(f"{node['title']} needs runtime input slot {slot}.")
-            result["image" if node_type == "input_image" else "video" if node_type == "input_video" else "audio" if node_type == "input_audio" else "mask" if node_type in {"input_mask_image", "input_mask_video"} else "media"] = runtime_paths[slot]
+            explicit = str(params.get("path") or "").strip()
+            if explicit:
+                # An explicit file path (set programmatically, e.g. by WanGP
+                # Studio's "Use in workflow") wins over the runtime upload
+                # slots so gallery media can feed a graph directly.
+                if not Path(explicit).is_file():
+                    raise ValueError(f"{node['title']} needs the file {explicit}.")
+                media_path = explicit
+            else:
+                slot = int(_number(params.get("slot"), auto_input_slot))
+                auto_input_slot = max(auto_input_slot + 1, slot + 1)
+                if slot >= len(runtime_paths):
+                    raise ValueError(f"{node['title']} needs runtime input slot {slot}.")
+                media_path = runtime_paths[slot]
+            result["image" if node_type == "input_image" else "video" if node_type == "input_video" else "audio" if node_type == "input_audio" else "mask" if node_type in {"input_mask_image", "input_mask_video"} else "media"] = media_path
         elif node_type == "text":
             result["text"] = _substitute(params.get("text") or params.get("value") or "", variables)
         elif node_type == "resolution_config":

@@ -82,6 +82,16 @@ def test_studio_toolbar_requests_live_graph_from_canvas():
     assert "action:'graph'" in canvas
 
 
+def test_canvas_accepts_host_media_additions():
+    """Studio's second documented canvas patch: the host can push 'add_media'
+    so the Gallery can drop media files into the workflow as input nodes."""
+    host = _read(os.path.join(ASSETS, "workflow.js"))
+    canvas = _read(os.path.join(ASSETS, "canvas.js"))
+    assert "addMediaInput" in host
+    assert "action==='add_media'" in canvas
+    assert "addMediaNode" in canvas
+
+
 def test_canvas_messages_are_origin_checked():
     host = _read(os.path.join(ASSETS, "workflow.js"))
     canvas = _read(os.path.join(ASSETS, "canvas.js"))

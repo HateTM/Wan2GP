@@ -160,3 +160,32 @@ def test_empty_upload_panel_is_hidden(page):
     panel = page.locator("#gallery-uploads")
     assert panel.count() == 1
     assert not panel.is_visible()
+
+
+def test_use_in_workflow_adds_input_node(page):
+    """1.4.0 flagship: a gallery file lands on the workflow canvas as an
+    input node with an explicit path, ready to run through the native queue."""
+    page.evaluate(
+        "(function(){ var card = document.querySelector('#gallery-window .media-card');"
+        " card.dispatchEvent(new MouseEvent('click', {bubbles: true})); })()"
+    )
+    page.wait_for_selector("#lightbox[open]", timeout=10000)
+    # renderLightbox() runs after the detail fetch: wait for the button to
+    # become visible rather than racing it.
+    page.wait_for_selector("#lightbox-usewf:not([hidden])", timeout=15000)
+    use_button = page.locator("#lightbox-usewf")
+    use_button.click()
+    # the workflow view is the canvas mode: hash + active nav, no section
+    page.wait_for_function(
+        "() => location.hash === '#workflow'"
+        " && document.getElementById('nav-workflow').classList.contains('active')", timeout=10000
+    )
+    page.wait_for_selector("#workflow-frame", timeout=20000)
+    page.wait_for_timeout(1500)  # the srcdoc iframe builds and answers the graph handshake
+    graph = page.evaluate(
+        "window.WanGPStudioCanvas.getGraph().then((graph) => ({"
+        " types: graph.nodes.map((node) => node.type),"
+        " paths: graph.nodes.map((node) => (node.params || {}).path || null) }))"
+    )
+    assert "input_image" in graph["types"]
+    assert any(path and "/e2e-" in path.replace("\\", "/") for path in graph["paths"])
