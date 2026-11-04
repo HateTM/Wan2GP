@@ -71,6 +71,9 @@ def test_runner_import_success_reports_none(monkeypatch):
 
 
 def test_gate_skips_modules_when_cuda_unavailable(monkeypatch):
+    # Neutral environment: with WANFLOW_REQUIRE_CUDA=1 this branch raises
+    # instead (see test_require_cuda_refuses_to_skip_without_gpu).
+    monkeypatch.delenv("WANFLOW_REQUIRE_CUDA", raising=False)
     monkeypatch.setattr(sys.modules["cuda_gate"], "cuda_ready", lambda: False)
     import cuda_gate
 

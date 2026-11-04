@@ -99,3 +99,46 @@ def test_kind_filter_and_search(page):
     )
     summary = page.text_content("#gallery-summary")
     assert re.search(r"400 items", summary)
+
+
+def test_long_session_soak(page, tmp_path_factory):
+    """Stage-E soak: repeated deep scrolls, filter resets and an upload must
+    leave the bounded stores bounded - no growth creep over a long session."""
+    total_height = page.evaluate("document.getElementById('gallery-viewport').scrollHeight")
+    for cycle in range(4):
+        _scroll_to(page, total_height)
+        page.wait_for_timeout(400)
+        _scroll_to(page, 0)
+        page.wait_for_timeout(200)
+    base = _total(page)  # earlier tests may already have added files
+    page.click("#gallery-refresh")  # full reset cycle
+    page.wait_for_selector(".media-card:not(.skeleton)", timeout=20000)
+    page.fill("#gallery-query", "prompt hint 3")
+    page.wait_for_function(
+        "() => window.WanGPStudioGallery.debug().total === 400", timeout=30000
+    )
+    page.fill("#gallery-query", "")
+    page.wait_for_function(
+        f"() => window.WanGPStudioGallery.debug().total === {base}", timeout=30000
+    )
+    from PIL import Image
+
+    import io as _io
+    buffer = _io.BytesIO()
+    Image.new("RGB", (8, 8), (90, 140, 220)).save(buffer, format="PNG")
+    upload_file = tmp_path_factory.mktemp("soak") / "soak-upload.png"
+    upload_file.write_bytes(buffer.getvalue())
+    page.set_input_files("#gallery-file", [str(upload_file)])
+    before = _total(page)
+    page.wait_for_function(
+        f"() => window.WanGPStudioGallery.debug().total === {before + 1}", timeout=20000
+    )
+    assert _total(page) == base + 1  # the soak upload landed exactly once
+    debug = _debug(page)
+    heap = page.evaluate(
+        "performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1e6) : -1"
+    )
+    print(f"\nsoak end: {debug}, JS heap ~{heap} MB")
+    assert debug["pages"] <= 13, debug
+    assert debug["cards"] <= 120, debug
+    assert debug["domCards"] == debug["cards"]
