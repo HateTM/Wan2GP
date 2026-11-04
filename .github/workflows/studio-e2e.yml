@@ -41,6 +41,7 @@ jobs:
             "safetensors" \
             "filelock" \
             "comfy-kitchen==0.2.35" \
+            "ffmpeg-python" \
             "uvicorn" \
             "playwright==1.49.1"
       - name: Install Chromium
