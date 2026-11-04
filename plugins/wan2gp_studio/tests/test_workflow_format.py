@@ -368,15 +368,30 @@ def test_export_import_routes_against_installed_plugin(tmp_path, monkeypatch):
     if not os.path.isfile(os.path.join(PLUGINS_ROOT, "wan2gp-wanflow-ui", "plugin.py")):
         pytest.skip("wanflow-ui not installed")
 
-    exported = client.get("/api/workflow/workflows/draft-video-t2v/export")
+    # Build the workflow through the real import route instead of assuming a
+    # user-created workflow exists: the vendored checkout ships none (the
+    # fork's .gitignore excludes workflows/* as runtime data).
+    created = client.post("/api/workflow/import", json={
+        "name": "selftest t2v",
+        "graph": {
+            "name": "Selftest T2V",
+            "nodes": [{"id": "n1", "type": "text_prompt", "params": {"text": "hi"}, "enabled": True}],
+            "edges": [],
+        },
+    })
+    assert created.status_code == 200, created.text
+    slug = created.json()["id"]
+
+    exported = client.get(f"/api/workflow/workflows/{slug}/export")
     assert exported.status_code == 200, exported.text
     payload = exported.json()
     assert payload["schema"] == "wan2gp-wanflow-ui"
     assert payload["graph"]["nodes"]
 
-    imported = client.post("/api/workflow/import", json={"graph": payload["graph"], "name": "imported copy"})
+    imported = client.post("/api/workflow/import", json={"graph": payload["graph"], "name": "selftest copy"})
     assert imported.status_code == 200, imported.text
     assert imported.json()["node_count"] == len(payload["graph"]["nodes"])
 
-    cleanup = client.delete("/api/workflow/workflows/imported-copy")
-    assert cleanup.status_code == 200
+    for leftover in (imported.json()["id"], slug):
+        cleanup = client.delete(f"/api/workflow/workflows/{leftover}")
+        assert cleanup.status_code == 200, cleanup.text
