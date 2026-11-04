@@ -128,6 +128,29 @@ def test_update_refuses_local_commits(plugin_repo, tmp_path):
     assert (clone / "local_feature.py").exists()
 
 
+def test_update_refuses_uncommitted_changes(plugin_repo, tmp_path):
+    """Uncommitted edits would turn a pull into a mess: refuse until clean."""
+    origin, clone = plugin_repo
+    (clone / "plugin_info.json").write_text(json.dumps({"name": "MyPlug", "version": "dirty"}), encoding="utf-8")
+    result = _manager(tmp_path).update_plugin("MyPlug")
+    assert "[Error] Update refused" in result, result
+    assert "uncommitted changes" in result
+
+
+def test_update_follows_tracking_branch_with_different_name(plugin_repo, tmp_path):
+    """A local branch may track a differently named remote branch (the
+    finetune-manager case: fix/civitai-filters -> origin/main); the update
+    must resolve the tracking ref, not assume the names match."""
+    origin, clone = plugin_repo
+    _git("branch", "fix/civitai-filters", cwd=clone)
+    _git("checkout", "fix/civitai-filters", cwd=clone)
+    _git("branch", "-u", "origin/main", cwd=clone)
+    _commit_all(origin, "upstream fix on main", "1.1.0")
+    result = _manager(tmp_path).update_plugin("MyPlug")
+    assert "[Success]" in result, result
+    assert json.loads((clone / "plugin_info.json").read_text(encoding="utf-8"))["version"] == "1.1.0"
+
+
 def test_update_refuses_unrelated_history(plugin_repo, tmp_path):
     origin, clone = plugin_repo
     orphan = tmp_path / "orphan" / "MyPlug"

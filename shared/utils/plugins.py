@@ -1543,14 +1543,24 @@ class PluginManager:
             if not repo.remotes:
                 return f"[Error] Update failed: no git remote configured for '{plugin_id}'."
             origin = repo.remotes.origin
-            
+
+            if repo.is_dirty(index=True, working_tree=True, untracked_files=False):
+                return f"[Error] Update refused: '{plugin_id}' has uncommitted changes. Commit or discard them before updating."
+
             if progress is not None: progress(0.2, desc=f"Fetching updates for '{plugin_id}'...")
             origin.fetch()
 
             local_commit = repo.head.commit
             try:
-                branch_name = repo.active_branch.name
-                remote_ref = origin.refs[branch_name]
+                branch = repo.active_branch
+                tracking = branch.tracking_branch()
+                if tracking is not None and getattr(tracking, "remote_name", "") == "origin":
+                    # A local branch may track a differently named remote
+                    # branch (fix/civitai-filters -> origin/master): follow the
+                    # tracking ref, not the local name.
+                    remote_ref = origin.refs[tracking.remote_head]
+                else:
+                    remote_ref = origin.refs[branch.name]
                 remote_commit = remote_ref.commit
             except Exception:
                 return f"[Error] Update failed: could not resolve remote branch for '{plugin_id}'."
