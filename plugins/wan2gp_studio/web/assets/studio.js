@@ -347,6 +347,7 @@
     dashboard: { nav: "nav-dashboard", hash: "#dashboard", label: "Dashboard", section: "dashboard-view", mode: "dashboard-mode", activate: "WanGPStudioDashboard" },
     gallery: { nav: "nav-gallery", hash: "#gallery", label: "Gallery", section: "gallery-view", mode: "gallery-mode", activate: "WanGPStudioGallery" },
     resources: { nav: "nav-resources", hash: "#resources", label: "Resources", section: "resource-view", mode: "resources-mode", activate: "WanGPStudioTelemetry" },
+    plugins: { nav: "nav-plugins", hash: "#plugins", label: "Plugins", section: "plugins-view", mode: "plugins-mode", activate: "WanGPStudioPlugins" },
     settings: { nav: "nav-settings", hash: "#settings", label: "Settings", section: "settings-view", mode: "settings-mode", activate: "WanGPStudioSettings" }
   };
 
@@ -422,6 +423,7 @@
     $("nav-workflow").addEventListener("click", () => setView("workflow"));
     $("nav-gallery").addEventListener("click", () => setView("gallery"));
     $("nav-resources").addEventListener("click", () => setView("resources"));
+    $("nav-plugins").addEventListener("click", () => setView("plugins"));
     $("nav-dashboard").addEventListener("click", () => setView("dashboard"));
     $("nav-settings").addEventListener("click", () => setView("settings"));
     $("nav-models").addEventListener("click", () => $("model-search").focus());

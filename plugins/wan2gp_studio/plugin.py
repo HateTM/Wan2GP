@@ -497,6 +497,9 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         jobs: dict[str, _JobRecord] = {}
         jobs_lock = threading.Lock()
         media_index = MediaIndex(self._media_roots)
+        from .plugin_health import PluginHealthService
+
+        plugin_health = PluginHealthService(lambda: self._plugins_root())
 
         def session_or_503():
             try:
@@ -788,6 +791,19 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 "targets": self._sendto.targets(),
                 "bridge": bool(self._sendto_bridge_installed),
             }
+
+        # -- Plugin health ----------------------------------------------
+        @app.get("/api/plugins/health")
+        def plugins_health(wait: bool = False):
+            """Installed-vs-upstream state per plugin. The first read is an
+            offline snapshot; ``?wait=1`` also contacts the remotes once."""
+            if wait:
+                return plugin_health.refresh(wait=True)
+            return plugin_health.snapshot()
+
+        @app.post("/api/plugins/health/refresh")
+        def plugins_health_refresh():
+            return plugin_health.refresh(wait=False, force=True)
 
         @app.post("/api/media/{media_id}/sendto")
         async def sendto_media(media_id: str, request: Request):

@@ -35,7 +35,7 @@ v1.0 covers the Dashboard, Workflow (node canvas with save/run/cancel and import
 - Incremental media index: a rescan only re-lists the directories whose mtime changed (new/deleted/renamed children); a full reconcile runs on forced rescans and at least every 60 s, so in-place overwrites are picked up there. `GET /api/media/roots` reports the last scan (`mode`, visited/reused directories, duration).
 - Real SendTo hand-off: Studio reads the target plugin's `sendto.json` manifest (the same contract the SendTo plugin uses), parks a one-shot hand-off id, and opens the WanGP UI with `?studio_sendto=<id>`. A hidden Studio control in the main Gradio UI receives the live session `state`, appends `{"path", "slot"}` to the manifest's `inbox_key`, and the injected JS selects the target tab so the plugin drains the frame into the chosen slot (Image Suite: Img2Img / MultiCanvas / Modify). No code is copied from the target plugin; without the bridge or the plugin the UI degrades to a copied path. Targets are filtered by the manifest's `accepts` kinds and the plugin's enabled state on both the UI and the API side.
 
-The first frontend was deliberately a lightweight bootstrap; the later milestones replaced that scope. As of 1.3 the visual node canvas supports graph editing, workflow persistence and multi-node execution through `/api/workflow/*`, the Media Center is a real gallery browser (lightbox, upload, Worlds) with an incremental index, and Resources shows live RAM/VRAM telemetry. Image editing happens through SendTo into the enabled editor plugin (Image Suite) rather than a built-in editor. The queue panel shows Studio-submitted jobs, not every task submitted from the native WanGP UI.
+The first frontend was deliberately a lightweight bootstrap; the later milestones replaced that scope. As of 1.3 the visual node canvas supports graph editing, workflow persistence and multi-node execution through `/api/workflow/*`, the Media Center is a real gallery browser (lightbox, upload, Worlds) with an incremental index, and Resources shows live RAM/VRAM telemetry. Image editing happens through SendTo into the enabled editor plugin (Image Suite) rather than a built-in editor. The Plugins view is a health board: every installed plugin is compared with its upstream repository (version, behind/ahead, local commits, dead remotes) without ever auto-updating a fork. The queue panel shows Studio-submitted jobs, not every task submitted from the native WanGP UI.
 
 ## API routes
 
@@ -59,6 +59,8 @@ The first frontend was deliberately a lightweight bootstrap; the later milestone
 - GET /studio/api/sendto/{handoff_id} (hand-off status: pending / consumed / expired)
 - DELETE /studio/api/media/{media_id}?confirm=true (removes the file and its .json sidecar)
 - GET /studio/api/environment (capability registry: plugin states, integration levels, licenses)
+- GET /studio/api/plugins/health[?wait=1] (installed-vs-upstream state per plugin: version, fork/divergence flags, local commits, remote reachability; `wait=1` also contacts remotes once)
+- POST /studio/api/plugins/health/refresh (background upstream scan, cooldown-limited)
 - GET /studio/api/workflow/status | /catalog | /workflows[/{slug}] (GET, PUT, DELETE)
 - POST /studio/api/workflow/validate (normalize + cycle/topology check)
 - POST /studio/api/workflow/runs with {graph, inputs}; GET /runs/{run_id}; GET /runs/{run_id}/events (SSE); POST /runs/{run_id}/cancel
@@ -71,7 +73,10 @@ The vendored `canvas.js` carries one documented Studio patch: it answers host `g
 
 ## Testing
 
-Run the suite with the repo venv: `env_uv/Scripts/python.exe -m pytest plugins/wan2gp_studio/tests -q`.
+Run the suites with the repo venv:
+
+- `env_uv/Scripts/python.exe -m pytest plugins/wan2gp_studio/tests -q`
+- `env_uv/Scripts/python.exe -m pytest plugins/plugin_manager/tests -q` (version-compare and update fork-guard regressions for `shared/utils/plugins.py`)
 
 - The core CI job installs pinned test dependencies, including `diffusers==0.36.0` — `shared.utils` imports it at package init, so a missing diffusers fails at collection.
 - Tests that need the optional WanFlow UI plugin skip when it is absent. The `studio-integration` job clones the plugin from the repository variables `WANFLOW_UI_REPO` (git URL) and `WANFLOW_UI_REF` (default `main`), sets `WANFLOW_UI_REQUIRED=1`, and then a missing WanFlow import fails the run instead of silently skipping. Set both variables under Settings → Secrets and variables → Actions → Variables to enable it.
