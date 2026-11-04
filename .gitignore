@@ -56,6 +56,7 @@ deepy_sessions/
 wgp_config.json
 plugins_local.json
 /plugins/wan2gp-*/
+!/plugins/wan2gp-wanflow-ui/
 !/plugins/wan2gp-ming-image/
 /plugins/wangp-*/
 loras_url_cache.json

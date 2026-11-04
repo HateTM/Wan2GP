@@ -1,0 +1,1023 @@
+from __future__ import annotations
+
+import copy
+import json
+import threading
+import time
+import uuid
+from pathlib import Path
+from typing import Any, Callable
+
+from postprocessing import catalog as postprocess_catalog
+from shared.settings_metadata import clean_metadata_settings
+from shared.utils import prompt_parser
+
+from . import ai_runtime, media_ops, preflight, run_cache, runtime_engine
+from .graph_model import GENERATION_NODE_TYPES, effective_edges, node_ports, topological_order, validate_graph
+
+
+def _runtime_engine():
+    return runtime_engine
+
+
+def _runtime_ai():
+    return ai_runtime
+
+
+def _path(value: Any) -> str:
+    if isinstance(value, Path):
+        return str(value)
+    return str(value or "").strip()
+
+
+def _number(value: Any, default: int | float) -> int | float:
+    try:
+        return type(default)(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _substitute(value: Any, variables: dict[str, str]) -> str:
+    engine = _runtime_engine()
+    return engine.substitute_variables(value, variables) if isinstance(value, str) else str(value or "")
+
+
+class _Callbacks:
+    def __init__(self, callback: Callable[[str, float], None] | None = None):
+        self.callback = callback
+
+    def on_status(self, status):
+        if self.callback:
+            self.callback(str(status or ""), 0.0)
+
+    def on_progress(self, update):
+        try:
+            progress = float(getattr(update, "progress", 0) or 0)
+        except (TypeError, ValueError):
+            progress = 0.0
+        if self.callback:
+            self.callback(str(getattr(update, "status", "") or ""), progress)
+
+
+class _EnhancerProgress:
+    """Small Gradio-compatible progress adapter for Wan2GP's native enhancer."""
+
+    def __init__(self, callback=None):
+        self.callback = callback
+
+    def __call__(self, value, desc="", total=None, unit="steps", **_kwargs):
+        del unit
+        if not self.callback:
+            return
+        try:
+            current = float(value[0] if isinstance(value, (tuple, list)) else value)
+            maximum = float(total or (value[1] if isinstance(value, (tuple, list)) and len(value) > 1 else 1) or 1)
+            fraction = max(0.0, min(1.0, current / maximum)) if maximum else 0.0
+        except (TypeError, ValueError, ZeroDivisionError):
+            fraction = 0.0
+        self.callback(str(desc or "Enhancing prompt"), fraction)
+
+
+def _job_client_ids(job) -> set[str]:
+    return {str(value or "").strip() for value in (getattr(job, "webui_client_ids", ()) or ()) if str(value or "").strip()}
+
+
+def _queue_has_job(state: dict[str, Any], job) -> bool:
+    wanted = _job_client_ids(job)
+    if not wanted:
+        return False
+    gen = state.get("gen") if isinstance(state, dict) else None
+    queue = gen.get("queue", []) if isinstance(gen, dict) else []
+    candidates = list(queue or [])
+    if isinstance(gen, dict) and gen.get("inline_queue") is not None:
+        candidates.append(gen.get("inline_queue"))
+    for item in candidates:
+        params = item.get("params", {}) if isinstance(item, dict) else {}
+        client_id = params.get("client_id") if isinstance(params, dict) else None
+        if str(client_id or "").strip() in wanted:
+            return True
+    return False
+
+
+def _wake_webui_queue(api_session, job) -> bool:
+    """Wake only the v2-owned queue when the embedded UI missed its trigger."""
+    session = getattr(api_session, "_session", None)
+    state = getattr(session, "_state", None)
+    service = getattr(state, "service", None)
+    wake = getattr(service, "_process_inline_queue", None)
+    if not isinstance(state, dict) or not callable(wake) or not _queue_has_job(state, job):
+        return False
+    if bool(getattr(service, "generation_running", False)):
+        return False
+    threading.Thread(
+        target=wake,
+        args=(None,),
+        name="wan2gp-v2-queue-wakeup",
+        daemon=True,
+    ).start()
+    return True
+
+
+def _wait_job(job, cancel_check=None, callback=None, api_session=None):
+    wake_attempted = False
+    submitted_at = time.monotonic()
+    while not job.done:
+        if cancel_check and cancel_check():
+            job.cancel()
+            raise InterruptedError("Workflow cancelled.")
+        if not wake_attempted and api_session is not None and time.monotonic() - submitted_at >= 3.0:
+            wake_attempted = _wake_webui_queue(api_session, job)
+        time.sleep(0.08)
+    result = job.result()
+    if result.cancelled:
+        raise InterruptedError("Workflow cancelled.")
+    if not result.success:
+        errors = list(result.errors or [])
+        raise RuntimeError(str(errors[0] if errors else "Wan2GP task failed."))
+    return result
+
+
+def _connected_values(graph: dict[str, Any], node_id: str, port: str, values: dict[str, dict[str, Any]], model_defs: dict[str, dict[str, Any]] | None = None) -> list[Any]:
+    result = []
+    for edge in effective_edges(graph, model_defs):
+        target = edge.get("target") or {}
+        if target.get("node") == node_id and target.get("port") == port:
+            source = edge.get("source") or {}
+            result.append((values.get(source.get("node")) or {}).get(source.get("port")))
+    return [value for value in result if value not in (None, "")]
+
+
+def _first_path(values: list[Any]) -> str:
+    for value in values:
+        if isinstance(value, (str, Path)) and Path(value).is_file():
+            return str(value)
+        if isinstance(value, dict) and _path(value.get("path")) and Path(_path(value.get("path"))).is_file():
+            return _path(value.get("path"))
+    return ""
+
+
+def _output_path(root: Path, node_id: str, suffix: str) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    return root / f"{node_id}-{uuid.uuid4().hex[:10]}{suffix}"
+
+
+def _submit_magic_mask(source: str, params: dict[str, Any], output_root: Path, state: dict[str, Any], cancel_check=None) -> tuple[str, str]:
+    """Run Wan2GP's managed Magic Mask implementation for one image or video."""
+    from shared import magic_mask
+    from shared.utils.download import process_files_def
+    from shared.utils.process_locks import acquire_GPU_ressources, release_GPU_ressources
+    from shared.utils.utils import has_image_file_extension
+
+    if not source or not Path(source).is_file():
+        raise ValueError("Magic Mask needs an existing image or video input.")
+    if cancel_check and cancel_check():
+        raise InterruptedError("Magic Mask cancelled.")
+
+    keywords = magic_mask.parse_keywords(params.get("keywords") or params.get("objects") or "")
+    if not keywords:
+        raise ValueError("Magic Mask needs at least one object or person keyword.")
+    max_objects = params.get("max_objects", "all")
+    if max_objects in (None, "", "all"):
+        max_colored_objects = None
+    else:
+        max_colored_objects = max(1, min(5, int(max_objects)))
+    max_time = params.get("max_time")
+    if max_time in (None, ""):
+        max_time = None
+    else:
+        max_time = float(max_time)
+        if max_time <= 0:
+            raise ValueError("Magic Mask max video time must be greater than zero.")
+
+    process_files_def(**magic_mask.query_download_def())
+    process_id = magic_mask.PROCESS_ID
+    acquired = False
+    try:
+        acquire_GPU_ressources(state, process_id, magic_mask.PROCESS_NAME)
+        acquired = True
+        def check_cancel(*_args):
+            if cancel_check and cancel_check():
+                raise InterruptedError("Magic Mask cancelled.")
+
+        if has_image_file_extension(source):
+            _background, video = magic_mask.prepare_image_mask_input(source)
+            masks = magic_mask.generate_keyword_masks(
+                video,
+                keywords,
+                progress_callback=check_cancel,
+                max_colored_objects=max_colored_objects,
+            )
+            if getattr(masks, "ndim", 0) == 4 or (getattr(masks, "ndim", 0) == 3 and masks.shape[-1] != 3):
+                masks = masks[0]
+            mask = magic_mask.finalize_masks(masks, negative_mask=bool(params.get("negative_mask", False)))
+            output = _output_path(output_root, str(params.get("node_id") or "magic-mask"), ".png")
+            magic_mask.mask_to_image(mask).save(output)
+            return "mask_image", str(output)
+
+        video_path, video, fps = magic_mask.prepare_video_mask_input(source, max_time_seconds=max_time)
+        masks = magic_mask.generate_keyword_masks(
+            video,
+            keywords,
+            progress_callback=check_cancel,
+            max_colored_objects=max_colored_objects,
+        )
+        mask = magic_mask.finalize_masks(masks, negative_mask=bool(params.get("negative_mask", False)))
+        output_root.mkdir(parents=True, exist_ok=True)
+        output = magic_mask.save_mask_video(
+            video_path,
+            mask,
+            fps,
+            keywords,
+            output_dir=str(output_root),
+            abort_callback=check_cancel,
+        )
+        return "mask_video", str(output)
+    finally:
+        if acquired:
+            release_GPU_ressources(state, process_id)
+
+
+def _connected_config(inputs: dict[str, Any], port: str) -> dict[str, Any]:
+    value = inputs.get(port)
+    if isinstance(value, list):
+        value = next((item for item in reversed(value) if isinstance(item, dict)), None)
+    return value if isinstance(value, dict) else {}
+
+
+_NUMERIC_NATIVE_SETTINGS = {
+    "num_inference_steps", "steps", "video_length", "cfg_scale", "guidance_scale",
+    "flow_shift", "shift", "shift_scale", "denoising_strength", "sliding_window_size",
+    "sliding_window_overlap", "skip_steps_multiplier", "skip_steps_start_step_perc",
+    "attention_sparsity", "image_refs_relative_size",
+}
+
+_MODEL_DEFAULT_KEYS = {
+    "num_inference_steps", "steps", "video_length", "cfg_scale", "guidance_scale", "guidance_phases",
+    "guidance2_scale", "guidance3_scale", "flow_shift", "shift", "shift_scale", "sample_solver",
+    "denoising_strength", "sliding_window_size", "sliding_window_overlap", "sub_parallel_window_size",
+    "sub_parallel_window_overlap", "skip_steps_cache_type", "skip_steps_multiplier",
+    "skip_steps_start_step_perc", "override_attention", "attention_sparsity", "image_refs_relative_size",
+}
+
+
+def _sanitize_native_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    """Remove stale editor metadata accidentally saved as model values.
+
+    Older editor versions could persist a control definition (or a boolean
+    capability flag) under a numeric setting. Wan2GP should then use the
+    selected model's native default instead of receiving an invalid value.
+    """
+    for key in _NUMERIC_NATIVE_SETTINGS:
+        if key not in settings:
+            continue
+        value = settings[key]
+        if isinstance(value, bool) or isinstance(value, (dict, list, tuple)):
+            settings.pop(key, None)
+            continue
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                settings.pop(key, None)
+                continue
+            try:
+                settings[key] = float(value)
+            except ValueError:
+                settings.pop(key, None)
+    return settings
+
+
+def _apply_model_defaults(settings: dict[str, Any], plugin, model_type: str) -> dict[str, Any]:
+    """Fill omitted controls from Wan2GP's actual factory settings."""
+    get_defaults = getattr(plugin, "get_default_settings", None)
+    if not callable(get_defaults):
+        return settings
+    try:
+        defaults = get_defaults(model_type)
+    except Exception:
+        return settings
+    if not isinstance(defaults, dict):
+        return settings
+    for key in _MODEL_DEFAULT_KEYS:
+        value = defaults.get(key)
+        if value not in (None, "") and key not in settings:
+            settings[key] = copy.deepcopy(value)
+    return settings
+
+
+def _apply_connected_configuration(settings: dict[str, Any], params: dict[str, Any], inputs: dict[str, Any], model_type: str, model_def: dict[str, Any] | None = None, model_family: str = "") -> dict[str, Any]:
+    """Apply typed configuration-node outputs after inline node values.
+
+    A connected configuration node intentionally wins over the generation
+    node's inline value, matching the familiar ComfyUI override workflow.
+    """
+    resolution = _connected_config(inputs, "resolution_config")
+    for key in ("resolution", "resolution_tier", "aspect_ratio"):
+        if resolution.get(key) not in (None, ""):
+            params[key] = resolution[key]
+
+    sampling = _connected_config(inputs, "sampling_config")
+    attention = _connected_config(inputs, "attention_config")
+    reference = _connected_config(inputs, "reference_composition")
+    for source in (sampling, attention, reference):
+        for key, value in source.items():
+            if value not in (None, ""):
+                settings[key] = value
+
+    stack = _connected_config(inputs, "lora_stack")
+    if stack:
+        stack_model = str(stack.get("base_model_type") or stack.get("model_type") or "")
+        generation_base = str((model_def or {}).get("base_model_type") or (model_def or {}).get("architecture") or model_type)
+        accepted_families = {model_type, generation_base, model_family, str((model_def or {}).get("lora_family") or "")}
+        accepted_families.discard("")
+        if stack_model and stack_model not in accepted_families:
+            raise ValueError(f"LoRA Stack base '{stack_model}' does not match generation model family '{generation_base}'.")
+        values = stack.get("activated_loras") or []
+        if isinstance(values, str):
+            values = [values]
+        settings["activated_loras"] = [str(value).strip() for value in values if str(value).strip()]
+        settings["loras_multipliers"] = str(stack.get("loras_multipliers") or "")
+    return params
+
+
+def _submit_generation(plugin, api_session, main_state, node, inputs, variables, workflow_settings, output_root, callback, cancel_check):
+    engine = _runtime_engine()
+    params = node.get("params") or {}
+    settings = engine.clean_settings(copy.deepcopy(params.get("settings") or {}))
+    model_type = str(params.get("model_type") or settings.get("model_type") or settings.get("base_model_type") or "")
+    if not model_type:
+        raise ValueError(f"{node['title']} has no model selected.")
+    settings["model_type"] = model_type
+    _sanitize_native_settings(settings)
+    _apply_model_defaults(settings, plugin, model_type)
+    node_type = str(node.get("type") or "")
+    if node_type.endswith("_image") or node_type == "generate_image":
+        settings["image_mode"] = 1
+    elif node_type.endswith("_video") or node_type == "generate_video":
+        settings["image_mode"] = 0
+    model_def = plugin.get_model_def(model_type)
+    if not isinstance(model_def, dict):
+        raise ValueError(f"Model '{model_type}' is no longer available.")
+    for key in ("prompt", "negative_prompt", "seed", "steps", "num_inference_steps", "video_length", "cfg_scale", "guidance_scale", "sample_solver"):
+        if key in params and params[key] not in (None, ""):
+            settings[key] = _substitute(params[key], variables) if "prompt" in key else params[key]
+    if params.get("steps") not in (None, ""):
+        settings["num_inference_steps"] = params["steps"]
+    if "activated_loras" in params:
+        values = params.get("activated_loras") or []
+        if isinstance(values, str):
+            values = [values]
+        settings["activated_loras"] = [str(value).strip() for value in values if str(value).strip()]
+    if "loras_multipliers" in params:
+        settings["loras_multipliers"] = str(params.get("loras_multipliers") or "")
+    model_family = ""
+    resolve_family = getattr(plugin, "get_model_family", None)
+    if callable(resolve_family):
+        try:
+            model_family = str(resolve_family(model_type, for_ui=True) or "").strip()
+        except TypeError:
+            try:
+                model_family = str(resolve_family(model_type) or "").strip()
+            except Exception:
+                model_family = ""
+        except Exception:
+            model_family = ""
+    _apply_connected_configuration(settings, params, inputs, model_type, model_def, model_family)
+    prompt_values = inputs.get("prompt") or []
+    if prompt_values:
+        settings["prompt"] = _substitute(prompt_values[-1], variables)
+    settings.setdefault("repeat_generation", 1)
+    settings.setdefault("batch_size", 1)
+    source_path = _first_path((inputs.get("image") or []) + (inputs.get("video") or []) + (inputs.get("media") or []))
+    source_port = "image" if inputs.get("image") else "video" if inputs.get("video") else ""
+    mask = _first_path(inputs.get("mask") or [])
+    masked_image = bool(mask and source_port == "image" and node_type in {"generate_image", "edit_image", "inpaint_image"})
+    masked_video = bool(mask and source_port == "video" and node_type in {"generate_video", "edit_video", "inpaint_video"})
+    if masked_image:
+        # Wan2GP's image inpainting contract is image_mode=2 with a Control
+        # Image and a MASKED_AREA prompt mode.  image_mode=1 treats the same
+        # file as a reference and silently clears image_mask later in wgp.py.
+        settings["image_mode"] = 2
+        settings["image_guide"] = source_path
+        settings["image_mask"] = mask
+        settings["image_prompt_type"] = ""
+        settings["video_prompt_type"] = str(model_def.get("inpaint_video_prompt_type") or "VAG")
+        for key in ("image_start", "image_end", "video_source", "video_guide", "video_guide2"):
+            settings.pop(key, None)
+    elif masked_video:
+        # Video inpainting uses the normal video output mode, but the guide
+        # and mask must be supplied together with Wan2GP's V+A mode.
+        settings["video_guide"] = source_path
+        settings["video_mask"] = mask
+        settings["video_prompt_type"] = str(model_def.get("inpaint_video_prompt_type") or "VAG")
+        settings.pop("video_source", None)
+        for key in ("image_start", "image_end", "image_guide", "image_mask"):
+            settings.pop(key, None)
+    elif source_path:
+        # "auto" picks start_image / continue_video when the model supports them and falls back to a
+        # reference or control input otherwise (image models such as Qwen Image, Flux 2 Klein, Krea 2 have no start image).
+        mode = engine.normalize_source_mode(params.get("source_mode"))
+        allowed = str(model_def.get("image_prompt_types_allowed") or "")
+        if (mode == "start_image" and "S" not in allowed) or (mode == "continue_video" and "V" not in allowed):
+            mode = "auto"
+        settings, _resolved = engine.bind_source(settings, source_path, mode, model_def)
+    references = [_path(item) for item in (inputs.get("references") or []) if Path(_path(item)).is_file()]
+    if references and (not masked_image or model_def.get("inpaint_with_image_ref", False)):
+        settings = engine.add_stage_references(settings, references, model_def)
+    reference_videos = [_path(item) for item in (inputs.get("reference_videos") or []) if Path(_path(item)).is_file()]
+    if reference_videos:
+        settings = engine.add_stage_video_references(settings, reference_videos, model_def)
+    if mask and not (masked_image or masked_video):
+        settings["video_mask" if source_port == "video" else "image_mask"] = mask
+    end_frame = _first_path(inputs.get("end_frame") or [])
+    if end_frame:
+        settings = engine.bind_end_frame(settings, end_frame, model_def)
+    frame_paths = [_path(item) for item in (inputs.get("frames") or []) if Path(_path(item)).is_file()]
+    if frame_paths:
+        settings = engine.bind_injected_frames(settings, frame_paths, str(params.get("frame_positions") or "1"), model_def)
+    if inputs.get("audio"):
+        settings["audio_guide"] = _first_path(inputs["audio"])
+    try:
+        choices, _ = plugin.get_resolution_choices(settings.get("resolution"), model_def)
+        aspect_value = params.get("aspect_ratio")
+        if not aspect_value:
+            aspect_value = (workflow_settings or {}).get("aspect_ratio") or "source"
+        source_for_ratio = source_path if str(aspect_value).strip().lower() == "source" else None
+        aspect_ratio = engine.workflow_aspect_ratio(aspect_value, source_for_ratio)
+        requested_resolution = str(params.get("resolution") or "").strip().lower()
+        if requested_resolution and any(str(value).lower() == requested_resolution for _label, value in choices):
+            settings["resolution"] = requested_resolution
+        else:
+            requested_tier = str(params.get("resolution_tier") or "720p").strip().lower()
+            available_tiers = engine.available_resolution_tiers(choices)
+            if requested_tier not in available_tiers:
+                raise ValueError(
+                    f"Resolution tier '{requested_tier}' is not available for model '{model_type}'. "
+                    f"Available tiers: {', '.join(available_tiers) or 'none'}."
+                )
+            settings["resolution"] = engine.resolution_for_tier(
+                choices, requested_tier, aspect_ratio, int(model_def.get("vae_block_size", 16) or 16),
+            )
+    except ValueError:
+        raise
+    except Exception:
+        # Keep the historical fallback only for unavailable optional
+        # resolution metadata, not for an explicitly invalid tier.
+        pass
+    # Apply the same model-aware visibility/compatibility cleanup used by
+    # Wan2GP's main generator. This prevents settings from a previous model
+    # from leaking into the selected model's request.
+    settings = clean_metadata_settings(
+        _sanitize_native_settings(settings),
+        model_def,
+        attention_mode=str(settings.get("override_attention") or ""),
+    )
+    # The editor's "Steps" field and sampling-config nodes expose "steps" for
+    # convenience, but Wan2GP's settings gate only accepts "num_inference_steps".
+    steps_value = settings.pop("steps", None)
+    if steps_value not in (None, "") and settings.get("num_inference_steps") in (None, ""):
+        settings["num_inference_steps"] = steps_value
+    settings.pop("client_id", None)
+    settings.pop("priority", None)
+    callbacks = _Callbacks(callback)
+    expected = engine.expected_output_kind(settings, model_def)
+    # The API session validates every submitted task as a single generation
+    # (single_prompt=True): a multi-unit prompt in G/PG mode must be split
+    # here into one submit_task per unit.
+    prompt_text = str(settings.get("prompt") or "")
+    prompt_units = [prompt_text]
+    if str(settings.get("multi_prompts_gen_type") or "") in {"G", "PG"} and prompt_text.strip():
+        units = prompt_parser.split_prompt_units(prompt_text, settings["multi_prompts_gen_type"])
+        if len(units) > 1:
+            prompt_units = units
+    outputs = []
+    for index, unit_prompt in enumerate(prompt_units, start=1):
+        task_settings = copy.deepcopy(settings)
+        task_settings["prompt"] = unit_prompt
+        if callback is not None and len(prompt_units) > 1:
+            callback(f"{index}/{len(prompt_units)} | {unit_prompt[:60]}", 0.0)
+        job = api_session.submit_task(task_settings, callbacks=callbacks)
+        result = _wait_job(job, cancel_check=cancel_check, callback=callback, api_session=api_session)
+        path = engine.select_generated_path(result, expected)
+        if path:
+            outputs.append(path)
+    if not outputs:
+        return ""
+    return outputs if len(outputs) > 1 else outputs[0]
+
+
+def _prompt_enhancer_choices(plugin, model_def, *, audio_only: bool, image_mode: int):
+    resolver = getattr(plugin, "get_prompt_enhancer_choices", None)
+    if callable(resolver):
+        try:
+            return resolver(model_def, audio_only, image_mode, False)
+        except TypeError:
+            return resolver(model_def, audio_only, image_mode)
+    definition = model_def.get("prompt_enhancer_def") if isinstance(model_def, dict) else None
+    if isinstance(definition, dict):
+        labels = definition.get("labels") or {}
+        mode_letter = "P" if image_mode > 0 else "V"
+        choices = []
+        for key, label in labels.items():
+            key = str(key or "")
+            filters = {letter for letter in key if letter in "VP"}
+            if filters and mode_letter not in filters:
+                continue
+            value = key.replace("V", "").replace("P", "")
+            if value:
+                choices.append((str(label or value), value))
+        return choices, str(definition.get("default") or ""), definition
+    allowed = model_def.get("prompt_enhancer_choices_allowed") if isinstance(model_def, dict) else None
+    if not isinstance(allowed, (list, tuple)):
+        allowed = ["T"] if audio_only else ["T", "TI"]
+    return [(str(value), value) for value in allowed], "", None
+
+
+def _prepare_prompt_enhancer(plugin):
+    """Drop stale enhancer and generation offload state before a model switch."""
+    reset = getattr(plugin, "reset_prompt_enhancer", None)
+    reset_if_requested = getattr(plugin, "reset_prompt_enhancer_if_requested", None)
+    if callable(reset):
+        reset()
+    if callable(reset_if_requested):
+        reset_if_requested()
+    release_model = getattr(plugin, "release_model", None)
+    if callable(release_model):
+        release_model()
+
+
+def _release_loaded_model(plugin) -> None:
+    release_model = getattr(plugin, "release_model", None)
+    if callable(release_model):
+        release_model()
+
+
+def _workflow_unload_flags(graph: dict[str, Any]) -> bool:
+    """True when the workflow asks WanFlow to free loaded models itself.
+
+    Covers both workflow switches: unload_on_model_change (free a model once
+    another step needs a different one) and unload_around_heavy_processing
+    (free it around model-backed postprocess / mask / AI nodes)."""
+    settings = graph.get("settings") if isinstance(graph.get("settings"), dict) else {}
+    return bool(settings.get("unload_on_model_change") or settings.get("unload_around_heavy_processing"))
+
+
+def release_workflow_models(plugin, graph: dict[str, Any]) -> None:
+    """Release models a workflow left resident; safe to call when flags are off."""
+    if _workflow_unload_flags(graph):
+        _release_loaded_model(plugin)
+
+
+def _cleanup_prompt_enhancer(plugin):
+    reset = getattr(plugin, "reset_prompt_enhancer", None)
+    reset_if_requested = getattr(plugin, "reset_prompt_enhancer_if_requested", None)
+    if callable(reset):
+        reset()
+    if callable(reset_if_requested):
+        reset_if_requested()
+
+
+def _submit_prompt_enhancer(plugin, main_state, node, inputs, variables, callback, cancel_check):
+    params = node.get("params") or {}
+    model_type = str(params.get("model_type") or "").strip()
+    if not model_type:
+        raise ValueError(f"{node['title']} needs a target model.")
+    model_def = plugin.get_model_def(model_type)
+    if not isinstance(model_def, dict):
+        raise ValueError(f"Prompt enhancer model '{model_type}' is no longer available.")
+
+    prompt_values = inputs.get("prompt") or []
+    prompt = _substitute(prompt_values[-1] if prompt_values else params.get("prompt") or "", variables).strip()
+    if not prompt:
+        raise ValueError(f"{node['title']} needs a prompt input or inline prompt.")
+
+    target = str(params.get("target_media") or "").strip().lower()
+    metadata = model_def.get("metadata") or {}
+    outputs = list(metadata.get("main_output") or metadata.get("outputs") or [])
+    if target not in {"image", "video", "audio"}:
+        target = "audio" if "audio" in outputs else "image" if "image" in outputs else "video"
+    normalized_outputs = {str(value).lower() for value in outputs}
+    if normalized_outputs and target not in normalized_outputs:
+        raise ValueError(f"Prompt enhancer target '{target}' is incompatible with model '{model_type}'.")
+    is_image = target == "image"
+    audio_only = target == "audio"
+    choices, default, _definition = _prompt_enhancer_choices(plugin, model_def, audio_only=audio_only, image_mode=1 if is_image else 0)
+    allowed_modes = {str(value) for _label, value in choices}
+    mode = str(params.get("mode") or default or "").strip()
+    if not mode:
+        mode = next(iter(allowed_modes), "")
+    if not mode or mode not in allowed_modes:
+        raise ValueError(f"Prompt enhancer mode '{mode or '(empty)'}' is not supported by model '{model_type}'.")
+
+    images = []
+    for value in inputs.get("images") or []:
+        path = _first_path([value])
+        if path:
+            images.append(path)
+    if "I" in mode and not images:
+        raise ValueError(f"Prompt enhancer mode '{mode}' requires at least one connected image.")
+    if images and "I" not in mode:
+        raise ValueError(f"Prompt enhancer mode '{mode}' does not accept image inputs; choose an image-reference mode.")
+    if cancel_check and cancel_check():
+        raise InterruptedError("Workflow cancelled.")
+
+    enhancer = getattr(plugin, "exec_prompt_enhancer_engine", None)
+    if not callable(enhancer):
+        raise RuntimeError("Wan2GP native prompt enhancer is unavailable in this session.")
+    _prepare_prompt_enhancer(plugin)
+    progress = _EnhancerProgress(callback)
+    try:
+        enhanced = enhancer(
+            main_state,
+            model_type,
+            model_def,
+            mode,
+            [prompt],
+            [None],
+            images or None,
+            is_image,
+            audio_only,
+            int(_number(params.get("seed"), -1)),
+            progress,
+            -1,
+            enhancer_kwargs={"image_prompt_type": "", "video_prompt_type": "", "audio_prompt_type": ""},
+        )
+    except Exception as exc:
+        message = str(exc)
+        if "illegal memory access" in message.casefold():
+            raise RuntimeError(
+                "Prompt Enhancer encountered a CUDA illegal memory access. "
+                "Restart Wan2GP before retrying."
+            ) from exc
+        raise
+    finally:
+        _cleanup_prompt_enhancer(plugin)
+    if isinstance(enhanced, (list, tuple)):
+        enhanced = enhanced[0] if enhanced else ""
+    if isinstance(enhanced, (list, tuple)):
+        enhanced = enhanced[0] if enhanced else ""
+    answer = str(enhanced or "").strip()
+    if not answer:
+        raise RuntimeError("Wan2GP prompt enhancer returned an empty prompt.")
+    output_name = str(params.get("output_name") or "enhanced_prompt").strip()
+    if output_name:
+        variables[output_name] = answer
+    return answer
+
+
+def _submit_postprocess(api_session, node, source, inputs, callback, cancel_check):
+    params = node.get("params") or {}
+    process_type = str(params.get("process_type") or "").strip()
+    process_id = str(params.get("process_id") or "").strip()
+    process = next((item for media_type in ("image", "video", "audio") for item in postprocess_catalog.query_processes(media_type, enabled_only=False) if item.get("id") == process_id), None) if process_id else None
+    if process:
+        process_type = str(process.get("type") or process_type)
+    parameter_values = copy.deepcopy(params.get("parameters") or {})
+    if process:
+        for parameter in process.get("parameters") or []:
+            name = str(parameter.get("name") or "")
+            if name and name not in parameter_values and name in params:
+                parameter_values[name] = params[name]
+        references = [_path(item) for item in (inputs.get("references") or []) if Path(_path(item)).is_file()]
+        if references and any(parameter.get("name") == "spatial_upsampler_reference_images" for parameter in process.get("parameters") or []):
+            parameter_values["spatial_upsampler_reference_images"] = references
+        parameter_values, parameter_error = postprocess_catalog.normalize_parameters(process, parameter_values)
+        if parameter_error:
+            raise ValueError(f"{node['title']}: {parameter_error}")
+    else:
+        parameter_values = parameter_values or {}
+    method = str(params.get("method") or params.get("temporal_upsampling") or params.get("spatial_upsampling") or "")
+    if process:
+        method = postprocess_catalog.build_process_value(process, parameter_values) or method
+    callbacks = _Callbacks(callback)
+    if process_type == "temporal_upsampling":
+        job = api_session.submit_media_postprocessing(source, temporal_upsampling=method or "rife4", return_media=True, callbacks=callbacks, **{key: value for key, value in parameter_values.items() if key != "multiplier"})
+    elif process_type == "spatial_upsampling":
+        job = api_session.submit_media_postprocessing(source, spatial_upsampling=method or "lanczos2", return_media=True, callbacks=callbacks, **{key: value for key, value in parameter_values.items() if key != "multiplier"})
+    elif process_type == "soundtrack":
+        audio_source = _first_path(inputs.get("audio") or [])
+        job = api_session.submit_audio_remux(source, postprocess_audio=method or "mmaudio", audio_source=audio_source or None, postprocess_audio_prompt=parameter_values.get("prompt", params.get("prompt", "")), postprocess_audio_neg_prompt=parameter_values.get("negative_prompt", params.get("negative_prompt", "")), seed=int(_number(parameter_values.get("seed", params.get("seed")), -1)), return_media=True, callbacks=callbacks)
+    elif process_type == "voice_replacement":
+        job = api_session.submit_audio_remux(source, postprocess_audio=method, replace_voice_sample=parameter_values.get("voice_sample_media_id", params.get("replace_voice_sample")), replace_voice_sample2=parameter_values.get("voice_sample2_media_id", params.get("replace_voice_sample2")), return_media=True, callbacks=callbacks)
+    elif process_type == "audio_edit":
+        job = api_session.submit_audio_postprocessing(source, postprocess_audio=method, return_media=True, callbacks=callbacks, **parameter_values)
+    else:
+        raise ValueError(f"Unsupported postprocess type: {process_type or method}.")
+    result = _wait_job(job, cancel_check=cancel_check, callback=callback, api_session=api_session)
+    expected_kind = "audio" if process_type == "audio_edit" else "video" if process_type in {"soundtrack", "voice_replacement", "temporal_upsampling", "spatial_upsampling"} else ""
+    output = _runtime_engine().select_generated_path(result, expected_kind)
+    if not output:
+        raise RuntimeError("Wan2GP postprocessing completed without a media output.")
+    return output
+
+
+def _run_preflight(plugin, graph: dict[str, Any], root: Path, release_models: bool, variables: dict[str, str], callback) -> None:
+    """Report resource problems before the first node runs (graph setting `preflight`: warn, block or off)."""
+    settings = graph.get("settings") if isinstance(graph.get("settings"), dict) else {}
+    mode = str(settings.get("preflight") or "warn").strip().lower()
+    if mode == "off":
+        return
+    try:
+        from shared.utils import files_locator as fl
+
+        issues = preflight.check(
+            graph,
+            plugin.get_model_def,
+            locate=lambda name: fl.locate_file(name, error_if_none=False),
+            snapshot=preflight.system_snapshot(root),
+            release_models=release_models,
+        )
+    except Exception:
+        return  # the check must never be the reason a run does not start
+    if not issues:
+        return
+    variables["preflight"] = preflight.format_issues(issues)
+    for issue in issues:
+        if callback:
+            callback(f"Preflight {issue['level']}: {issue['message']}", 0.0)
+    if mode == "block" and any(issue["level"] == "warning" for issue in issues):
+        raise ValueError("Workflow blocked by the resource preflight (setting 'preflight' is 'block'):\n- " + "\n- ".join(issue["message"] for issue in issues if issue["level"] == "warning"))
+
+
+def _source_node_id(edges: list[dict[str, Any]], node_id: str, port: str) -> str:
+    for edge in edges:
+        target = edge.get("target") or {}
+        if target.get("node") == node_id and target.get("port") == port:
+            return str((edge.get("source") or {}).get("node") or "")
+    return ""
+
+
+def _describe_media(path: str, label: str, title: str, seconds: float | None, reused: bool, loaded: bool = False) -> str:
+    """One report line: where the media comes from, what it is and how long it took."""
+    parts = [f"{label}: {title or Path(path).name}"]
+    try:
+        info = media_ops.video_stream_info(path)
+        parts.append(f"{info['width']}x{info['height']}")
+        if media_ops.media_kind(path) == "video":
+            if info["fps"]:
+                parts.append(f"{info['fps']:.2f} fps")
+            parts.append(f"{info['duration']:.2f} s")
+        parts.append(f"{info['size'] / 1048576:.1f} MB")
+    except Exception:
+        parts.append(Path(path).name)
+    if reused:
+        parts.append("reused earlier result (not re-run)")
+    elif seconds is not None:
+        parts.append(f"generated in {seconds:.1f} s" + (" (includes model loading)" if loaded else ""))
+    return " | ".join(parts)
+
+
+def compare_report(a_path: str, b_path: str, a_title: str, b_title: str, a_seconds: float | None, b_seconds: float | None, a_reused: bool, b_reused: bool, a_loaded: bool = False, b_loaded: bool = False) -> str:
+    lines = ["Compare A/B", _describe_media(a_path, "A", a_title, a_seconds, a_reused, a_loaded), _describe_media(b_path, "B", b_title, b_seconds, b_reused, b_loaded)]
+    if not a_reused and not b_reused and a_seconds is not None and b_seconds is not None:
+        if a_loaded or b_loaded:
+            lines.append("Times are not comparable: " + ("A and B" if a_loaded and b_loaded else "A" if a_loaded else "B") + " also includes loading the model. Run the graph again (models stay loaded, fixed seeds are reused only if unchanged) or time each side separately for a fair speed comparison.")
+        elif a_seconds > 0 and b_seconds > 0:
+            faster, ratio = ("A", b_seconds / a_seconds) if a_seconds <= b_seconds else ("B", a_seconds / b_seconds)
+            lines.append(f"{faster} was faster by {ratio:.2f}x ({min(a_seconds, b_seconds):.1f} s against {max(a_seconds, b_seconds):.1f} s)")
+    return "\n".join(lines)
+
+
+def run_graph(plugin, api_session, main_state: dict[str, Any], graph: dict[str, Any], runtime_inputs: list[str] | None = None, *, output_root: str | Path, callback: Callable[[str, float], None] | None = None, cancel_check: Callable[[], bool] | None = None, node_callback: Callable[[str, str, dict[str, Any] | None], None] | None = None) -> tuple[list[str], dict[str, str]]:
+    model_defs = {}
+    try:
+        model_defs = {str(item.get("model_type")): item for item in plugin.list_model_defs() or [] if isinstance(item, dict)}
+    except Exception:
+        pass
+    errors = validate_graph(graph, model_defs)
+    if errors:
+        raise ValueError("Workflow graph is invalid:\n- " + "\n- ".join(errors))
+    nodes = {node["id"]: node for node in graph.get("nodes") or []}
+    values: dict[str, dict[str, Any]] = {}
+    variables: dict[str, str] = {}
+    outputs: list[str] = []
+    runtime_paths = []
+    for value in runtime_inputs or []:
+        path = getattr(value, "path", None) or getattr(value, "name", None) or value
+        path = str(path or "").strip()
+        if path:
+            runtime_paths.append(path)
+    root = Path(output_root)
+    auto_input_slot = 0
+    release_models = _workflow_unload_flags(graph)
+    loaded_model_type = ""
+    _run_preflight(plugin, graph, root, release_models, variables, callback)
+    order = topological_order(graph, model_defs)
+    store = run_cache.RunStore(root) if run_cache.enabled() else None
+    sigs: dict[str, tuple[str, bool]] = {}  # node id -> (signature, reproducible)
+    node_seconds: dict[str, float] = {}  # time spent running each node (reused nodes are absent)
+    reused_nodes: set[str] = set()
+    load_nodes: set[str] = set()  # generations that ran while their model was not yet loaded in this run
+    edges = effective_edges(graph, model_defs)
+    for index, node_id in enumerate(order, start=1):
+        if cancel_check and cancel_check():
+            raise InterruptedError("Workflow cancelled.")
+        node = nodes[node_id]
+        if not node.get("enabled", True):
+            if node_callback:
+                node_callback(node_id, "skipped", None)
+            continue
+        node_type = node.get("type")
+        inputs = {port: _connected_values(graph, node_id, port, values, model_defs) for port in node_ports(node, model_defs) if node_ports(node, model_defs)[port].get("direction") == "in"}
+        if node_callback:
+            node_callback(node_id, "running", None)
+        if callback:
+            callback(f"{index}/{len(nodes)} | {node['title']}", 0.0)
+        result: dict[str, Any] = {}
+        params = node.get("params") or {}
+        started_at = time.perf_counter()
+        # Resume / cache: reuse the result of an identical node (same parameters, same upstream results).
+        heavy = node_type in run_cache.HEAVY_TYPES
+        use_cache = store is not None and heavy and params.get("cache") is not False
+        node_key = None
+        reproducible = False
+        reused = False
+        variables_before: dict[str, str] = {}
+        if heavy:
+            upstream = []
+            upstream_reproducible = True
+            for edge in edges:
+                target = edge.get("target") or {}
+                if target.get("node") == node_id:
+                    source = edge.get("source") or {}
+                    source_sig, source_reproducible = sigs.get(source.get("node"), ("", False))
+                    upstream.append([target.get("port"), source.get("port"), source_sig])
+                    upstream_reproducible = upstream_reproducible and source_reproducible
+            if use_cache:
+                node_key = run_cache.node_key(node, graph, variables, sorted(upstream, key=str))
+            reproducible = upstream_reproducible and run_cache.node_is_deterministic(node, graph)
+            variables_before = dict(variables)
+            if node_key:
+                entry = store.get(node_key, cross_run=reproducible)
+                if entry is not None:
+                    result = entry["result"]
+                    variables.update(entry.get("vars") or {})
+                    reused = True
+                    if callback:
+                        callback(f"{index}/{len(nodes)} | {node['title']} (reused earlier result)", 1.0)
+        if reused:
+            pass
+        elif node_type in {"input_image", "input_video", "input_audio", "input_mask_image", "input_mask_video", "load_media"}:
+            slot = int(_number(params.get("slot"), auto_input_slot))
+            auto_input_slot = max(auto_input_slot + 1, slot + 1)
+            if slot >= len(runtime_paths):
+                raise ValueError(f"{node['title']} needs runtime input slot {slot}.")
+            result["image" if node_type == "input_image" else "video" if node_type == "input_video" else "audio" if node_type == "input_audio" else "mask" if node_type in {"input_mask_image", "input_mask_video"} else "media"] = runtime_paths[slot]
+        elif node_type == "text":
+            result["text"] = _substitute(params.get("text") or params.get("value") or "", variables)
+        elif node_type == "resolution_config":
+            result["settings"] = {
+                key: params[key]
+                for key in ("resolution", "resolution_tier", "aspect_ratio")
+                if params.get(key) not in (None, "") and not (key == "resolution_tier" and str(params.get(key)).lower() == "auto")
+            }
+        elif node_type == "lora_stack":
+            # local name must not shadow the graph-level `values` accumulator:
+            # `values[node_id] = result` below would then index a list with a str.
+            lora_names = params.get("activated_loras") or []
+            if isinstance(lora_names, str):
+                lora_names = [lora_names]
+            result["stack"] = {
+                "model_type": str(params.get("model_type") or ""),
+                "base_model_type": str(params.get("base_model_type") or params.get("model_type") or ""),
+                "activated_loras": [str(value).strip() for value in lora_names if str(value).strip()],
+                "loras_multipliers": str(params.get("loras_multipliers") or ""),
+            }
+        elif node_type == "sampling_config":
+            result["settings"] = {
+                key: params[key]
+                for key in ("num_inference_steps", "steps", "sample_solver", "cfg_scale", "guidance_scale", "flow_shift", "shift", "denoising_strength")
+                if params.get(key) not in (None, "")
+            }
+        elif node_type == "attention_config":
+            result["settings"] = {
+                key: params[key]
+                for key in ("override_attention", "attention_sparsity", "skip_steps_cache_type", "skip_steps_multiplier", "skip_steps_start_step_perc")
+                if params.get(key) not in (None, "")
+            }
+        elif node_type == "reference_composition":
+            result["settings"] = {
+                "image_refs_relative_size": params.get("image_refs_relative_size")
+            } if params.get("image_refs_relative_size") not in (None, "") else {}
+        elif node_type in GENERATION_NODE_TYPES:
+            node_params = node.get("params") or {}
+            gen_settings = node_params.get("settings") if isinstance(node_params.get("settings"), dict) else {}
+            node_model_type = str(node_params.get("model_type") or gen_settings.get("model_type") or gen_settings.get("base_model_type") or "")
+            if release_models and loaded_model_type and node_model_type != loaded_model_type:
+                _release_loaded_model(plugin)
+                loaded_model_type = ""
+            if node_model_type != loaded_model_type:
+                load_nodes.add(node_id)
+            result["output"] = _submit_generation(plugin, api_session, main_state, node, inputs, variables, graph.get("settings") or {}, root, callback, cancel_check)
+            loaded_model_type = node_model_type or loaded_model_type
+        elif node_type == "ai_analyze":
+            if release_models and loaded_model_type:
+                _release_loaded_model(plugin)
+                loaded_model_type = ""
+            images = [_first_path([item]) for item in inputs.get("images") or []]
+            instruction = _substitute((inputs.get("instruction") or [params.get("instruction") or "Describe the image."])[-1], variables)
+            answer = _runtime_ai().run_ai_analysis(getattr(plugin, "_deepy", None), main_state, params.get("model", 3), instruction, [path for path in images if path], params.get("max_tokens", 192), reset_prompt_enhancer=getattr(plugin, "reset_prompt_enhancer", None), reset_prompt_enhancer_if_requested=getattr(plugin, "reset_prompt_enhancer_if_requested", None))
+            variables[str(params.get("output_name") or "analysis")] = answer
+            result["text"] = answer
+        elif node_type == "prompt_enhancer":
+            if release_models and loaded_model_type:
+                _release_loaded_model(plugin)
+                loaded_model_type = ""
+            result["text"] = _submit_prompt_enhancer(plugin, main_state, node, inputs, variables, callback, cancel_check)
+        elif node_type in {"last_frame", "extract_frame"}:
+            source = _first_path(inputs.get("video") or [])
+            if not source:
+                raise ValueError(f"{node['title']} needs a video input.")
+            frame = int(_number(params.get("frame"), 1))
+            result["image"] = media_ops.extract_last_frame(source, _output_path(root, node_id, ".png"), cancel_check) if node_type == "last_frame" else media_ops.extract_frame(source, frame, _output_path(root, node_id, ".png"), cancel_check)
+        elif node_type == "video_probe":
+            source = _first_path(inputs.get("video") or [])
+            result["metadata"] = json.dumps(media_ops.probe(source), ensure_ascii=False)
+        elif node_type == "image_sequence":
+            result["video"] = media_ops.image_sequence(
+                [_path(item) for item in inputs.get("images") or []],
+                float(_number(params.get("fps"), 24)),
+                _output_path(root, node_id, ".mp4"),
+                cancel_check,
+            )
+        elif node_type == "magic_mask":
+            source = _first_path(inputs.get("source") or [])
+            if release_models and loaded_model_type:
+                _release_loaded_model(plugin)
+                loaded_model_type = ""
+            mask_port, mask_path = _submit_magic_mask(
+                source,
+                {**params, "node_id": node_id},
+                root,
+                main_state,
+                cancel_check,
+            )
+            result[mask_port] = mask_path
+        elif node_type == "mask_editor":
+            mask_path = _first_path(inputs.get("mask") or []) or _path(params.get("mask_path"))
+            if not mask_path or not Path(mask_path).is_file():
+                raise ValueError(f"{node['title']} needs an existing mask file. Use Input Mask Image/Video or the native mask editor output.")
+            result["mask"] = mask_path
+        elif node_type == "postprocess":
+            source = _first_path(inputs.get("media") or [])
+            if not source:
+                raise ValueError(f"{node['title']} needs a media input.")
+            if release_models and loaded_model_type:
+                _release_loaded_model(plugin)
+                loaded_model_type = ""
+            result["output"] = _submit_postprocess(api_session, node, source, inputs, callback, cancel_check)
+        elif node_type == "compare_ab":
+            a_path = _first_path(inputs.get("a") or [])
+            b_path = _first_path(inputs.get("b") or [])
+            if not a_path or not b_path:
+                raise ValueError(f"{node['title']} needs both an A and a B input.")
+            a_id, b_id = _source_node_id(edges, node_id, "a"), _source_node_id(edges, node_id, "b")
+            layout = "stacked" if str(params.get("layout") or "") == "stacked" else "side_by_side"
+            result["output"] = media_ops.compare(a_path, b_path, _output_path(root, node_id, ".mp4"), layout, params.get("labels") is not False, cancel_check)
+            result["report"] = compare_report(
+                a_path, b_path,
+                (nodes.get(a_id) or {}).get("title", ""), (nodes.get(b_id) or {}).get("title", ""),
+                node_seconds.get(a_id), node_seconds.get(b_id), a_id in reused_nodes, b_id in reused_nodes,
+                a_id in load_nodes, b_id in load_nodes,
+            )
+            variables[str(params.get("output_name") or "compare_report")] = result["report"]
+        elif node_type == "ffmpeg_trim":
+            result["output"] = media_ops.trim(_first_path(inputs.get("video") or []), float(params.get("start", 0)), float(params.get("duration", 5)), _output_path(root, node_id, ".mp4"), cancel_check)
+        elif node_type == "ffmpeg_concat":
+            result["output"] = media_ops.concat([_path(item) for item in inputs.get("videos") or []], _output_path(root, node_id, ".mp4"), cancel_check)
+        elif node_type == "ffmpeg_mux_audio":
+            result["output"] = media_ops.mux_audio(_first_path(inputs.get("video") or []), _first_path(inputs.get("audio") or []), _output_path(root, node_id, ".mp4"), cancel_check)
+        elif node_type == "ffmpeg_remove_audio":
+            result["output"] = media_ops.remove_audio(_first_path(inputs.get("video") or []), _output_path(root, node_id, ".mp4"), cancel_check)
+        elif node_type == "ffmpeg_resize":
+            result["output"] = media_ops.resize(_first_path(inputs.get("video") or []), int(_number(params.get("width"), 832)), int(_number(params.get("height"), 480)), _output_path(root, node_id, ".mp4"), cancel_check)
+        elif node_type == "ffmpeg_fps":
+            result["output"] = media_ops.fps(_first_path(inputs.get("video") or []), float(params.get("fps", 24)), _output_path(root, node_id, ".mp4"), cancel_check)
+        else:
+            raise ValueError(f"Unsupported node type: {node_type}")
+        if reused:
+            reused_nodes.add(node_id)
+        else:
+            node_seconds[node_id] = time.perf_counter() - started_at
+        if heavy:
+            if node_key:
+                if not reused:
+                    delta = {name: value for name, value in variables.items() if variables_before.get(name) != value}
+                    store.put(node_key, result, delta, cross_run=reproducible)
+                sigs[node_id] = (node_key, reproducible)
+            else:
+                # opted out of caching: downstream nodes must never match across runs
+                sigs[node_id] = (run_cache.digest("nocache", uuid.uuid4().hex), False)
+        else:
+            sigs[node_id] = (run_cache.digest("value", node_type, run_cache.fingerprint_value(result)), True)
+        values[node_id] = result
+        if node_callback:
+            node_callback(node_id, "done", result)
+        for value in result.values():
+            if isinstance(value, list):
+                outputs.extend(item for item in value if isinstance(item, str) and Path(item).is_file())
+            elif isinstance(value, str) and Path(value).is_file():
+                outputs.append(value)
+    if store is not None:
+        store.finish()
+        store.prune()
+    return list(dict.fromkeys(outputs)), variables

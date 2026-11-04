@@ -42,10 +42,14 @@ jobs:
         run: python -m pytest plugins/wan2gp_studio/tests -q
       - name: Run plugin manager tests (version compare, update fork-guard)
         run: python -m pytest plugins/plugin_manager/tests -q
+      - name: Run vendored WanFlow UI tests (reconciled fork vs current WanGP)
+        run: python -m pytest plugins/wan2gp-wanflow-ui/tests -q
 
-  # Optional integration job: WanFlow UI is not vendored into this repository,
-  # so the source repository and ref must be provided as repository variables
-  # (Settings -> Secrets and variables -> Actions -> Variables):
+  # Optional integration job. The WanFlow UI fork is vendored at
+  # plugins/wan2gp-wanflow-ui and covered by the main job above; this job is
+  # opt-in for testing Studio against a DIFFERENT WanFlow version. Point the
+  # repository variables (Settings -> Secrets and variables -> Actions ->
+  # Variables) at that checkout:
   #   WANFLOW_UI_REPO  e.g. https://github.com/<owner>/wan2gp-wanflow-ui
   #   WANFLOW_UI_REF   branch or tag; defaults to main
   # When WANFLOW_UI_REPO is unset the job is skipped. With WANFLOW_UI_REQUIRED=1

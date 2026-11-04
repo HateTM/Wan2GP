@@ -71,12 +71,15 @@ The first frontend was deliberately a lightweight bootstrap; the later milestone
 
 The vendored `canvas.js` carries one documented Studio patch: it answers host `get_graph` requests with the current graph (`WAN2GP_WORKFLOWS_V2` `graph` reply) and ignores messages that do not come from `window.parent`. Re-vendoring a newer WanFlow release must re-apply this patch (see `tests/test_frontend_static.py`).
 
+The full WanFlow UI plugin itself is vendored at `plugins/wan2gp-wanflow-ui` — the reconciled fork (0.2.0; see `RECONCILIATION.md` there): a verified superset of upstream with result cache/resume, resource preflight, the Compare A/B node and the FFmpeg 9 fix. Its tests run in CI by default; the `studio-integration` job stays opt-in for checking Studio against an alternate WanFlow version via the `WANFLOW_UI_REPO` variable. Never update that folder with `git pull` — it carries local git history; re-run the content-level reconciliation instead.
+
 ## Testing
 
 Run the suites with the repo venv:
 
 - `env_uv/Scripts/python.exe -m pytest plugins/wan2gp_studio/tests -q`
 - `env_uv/Scripts/python.exe -m pytest plugins/plugin_manager/tests -q` (version-compare and update fork-guard regressions for `shared/utils/plugins.py`)
+- `env_uv/Scripts/python.exe -m pytest plugins/wan2gp-wanflow-ui/tests -q` (the vendored WanFlow UI fork against current WanGP)
 
 - The core CI job installs pinned test dependencies, including `diffusers==0.36.0` — `shared.utils` imports it at package init, so a missing diffusers fails at collection.
 - Tests that need the optional WanFlow UI plugin skip when it is absent. The `studio-integration` job clones the plugin from the repository variables `WANFLOW_UI_REPO` (git URL) and `WANFLOW_UI_REF` (default `main`), sets `WANFLOW_UI_REQUIRED=1`, and then a missing WanFlow import fails the run instead of silently skipping. Set both variables under Settings → Secrets and variables → Actions → Variables to enable it.

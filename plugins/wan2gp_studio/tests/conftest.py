@@ -1,10 +1,10 @@
 """Shared pytest setup for the Studio test suite.
 
-WanFlow UI is an optional plugin and is not vendored into this repository, so
-most workflow tests skip when it is missing. That is fine for the core job, but
-it can mask a real API break: with ``WANFLOW_UI_REQUIRED=1`` (used by the CI
-integration job) a missing WanFlow import fails the session instead of turning
-the whole suite into skips.
+The WanFlow UI plugin is vendored at ``plugins/wan2gp-wanflow-ui`` (the
+reconciled fork - see that folder's RECONCILIATION.md), so the workflow tests
+run in every environment. ``WANFLOW_UI_REQUIRED=1`` remains for the opt-in CI
+integration job that checks out an *alternate* WanFlow version: a missing
+import there fails the session instead of turning the suite into skips.
 """
 import importlib
 import os
