@@ -97,9 +97,29 @@
 
   function activate() {
     load();
+    loadHistory();
   }
 
   $("plugins-refresh").addEventListener("click", refresh);
   window.WanGPStudioPlugins = { activate, refresh, load };
   if (location.hash === "#plugins") S.setView("plugins");
 })();
+
+  function renderHistory(entries) {
+    const host = document.getElementById("plugins-history");
+    if (!host) return;
+    if (!entries || !entries.length) {
+      host.innerHTML = '<div class="history-empty">No upstream scans recorded yet — press ↻ to check.</div>';
+      return;
+    }
+    host.innerHTML = entries.slice(0, 10).map((entry) => {
+      const states = Object.entries(entry.states || {})
+        .map(([key, value]) => key + " " + value).join(", ");
+      return '<div class="history-row"><span>' + new Date(entry.at * 1000).toLocaleString() +
+        '</span><span>' + (states || "empty") + "</span></div>";
+    }).join("");
+  }
+
+  function loadHistory() {
+    S.api("api/plugins/health/history").then((payload) => renderHistory(payload.history)).catch(() => {});
+  }

@@ -831,6 +831,15 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         def plugins_health_refresh():
             return plugin_health.refresh(wait=False, force=True)
 
+        @app.get("/api/plugins/health/history")
+        def plugins_health_history():
+            path = Path(self._plugins_root()).resolve().parent.parent / "workspaces" / "studio_plugin_health.json"
+            try:
+                entries = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                entries = []
+            return {"history": list(reversed(entries))[:20] if isinstance(entries, list) else []}
+
         @app.post("/api/media/{media_id}/sendto")
         async def sendto_media(media_id: str, request: Request):
             media_index.refresh()
@@ -971,6 +980,14 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         def workflow_list():
             workflow_gate()
             return workflow.workflows()
+
+        @app.get("/api/workflow/templates")
+        def workflow_templates():
+            workflow_gate()
+            try:
+                return {"templates": workflow.templates()}
+            except WorkflowUnavailable as exc:
+                raise HTTPException(status_code=503, detail={"state": "unavailable", "message": str(exc)}) from exc
 
         @app.get("/api/workflow/workflows/{slug}/export")
         def workflow_export(slug: str, format: str = "wanflow"):

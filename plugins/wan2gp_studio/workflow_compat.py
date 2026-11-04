@@ -907,6 +907,55 @@ class WorkflowCompat:
         except OSError:
             pass
 
+    def templates(self) -> list[dict[str, Any]]:
+        """Built-in starter graphs (T2V, I2V, T2I) for the workflow toolbar.
+
+        Built with the plugin's own graph_model so they always match the
+        schema; validation runs in the tests."""
+        model = self._module("graph_model")
+        counter = {"i": 0}
+
+        def node(node_type: str, **params: Any) -> dict[str, Any]:
+            counter["i"] += 1
+            return model.new_node(node_type, params=params)
+
+        def text_body(body: str) -> dict[str, Any]:
+            return node("text", text=body)
+
+        resolution = node("resolution_config", resolution_tier="auto")
+        prompt = text_body("Describe the shot: subject, motion, light, lens.")
+        t2v = model.new_graph("Text → Video")
+        gen_video = node("generate_video", model_type="wan2.1")
+        t2v["nodes"] = [prompt, resolution, gen_video]
+        t2v["edges"] = [
+            {"source": {"node": prompt["id"], "port": "text"}, "target": {"node": gen_video["id"], "port": "prompt"}},
+            {"source": {"node": resolution["id"], "port": "settings"}, "target": {"node": gen_video["id"], "port": "settings"}},
+        ]
+
+        i2v = model.new_graph("Image → Video")
+        image_in = node("input_image", path="")
+        gen_i2v = node("generate_video", model_type="wan2.1")
+        i2v["nodes"] = [image_in, prompt, resolution, gen_i2v]
+        i2v["edges"] = [
+            {"source": {"node": image_in["id"], "port": "image"}, "target": {"node": gen_i2v["id"], "port": "image"}},
+            {"source": {"node": prompt["id"], "port": "text"}, "target": {"node": gen_i2v["id"], "port": "prompt"}},
+            {"source": {"node": resolution["id"], "port": "settings"}, "target": {"node": gen_i2v["id"], "port": "settings"}},
+        ]
+
+        t2i = model.new_graph("Text → Image")
+        gen_image = node("generate_image", model_type="qwen_image")
+        t2i["nodes"] = [prompt, resolution, gen_image]
+        t2i["edges"] = [
+            {"source": {"node": prompt["id"], "port": "text"}, "target": {"node": gen_image["id"], "port": "prompt"}},
+            {"source": {"node": resolution["id"], "port": "settings"}, "target": {"node": gen_image["id"], "port": "settings"}},
+        ]
+
+        return [
+            {"id": "template-t2v", "name": "Text → Video", "graph": t2v},
+            {"id": "template-i2v", "name": "Image → Video", "graph": i2v},
+            {"id": "template-t2i", "name": "Text → Image", "graph": t2i},
+        ]
+
     def snapshot(self, run_id: str) -> dict[str, Any] | None:
         with self._lock:
             record = self._runs.get(run_id)

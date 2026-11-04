@@ -118,6 +118,22 @@
     await buildFrame(graph || state.graph || { name: "Untitled workflow", nodes: [], edges: [] });
   }
 
+  async function uploadDroppedFiles(files) {
+    for (const file of Array.from(files || [])) {
+      const body = new FormData();
+      body.append("file", file);
+      try {
+        const response = await fetch("api/media/upload", { method: "POST", body, credentials: "same-origin" });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.detail || "Upload failed (" + response.status + ")");
+        addMediaInput(payload.item.kind, payload.item.path);
+        setStatus("Added " + payload.item.name + " to the canvas");
+      } catch (error) {
+        toast(file.name + ": " + error.message, true);
+      }
+    }
+  }
+
   function postNodeStatus() {
     if (!state.frame || !state.frame.contentWindow) return;
     state.frame.contentWindow.postMessage({
@@ -156,6 +172,34 @@
       setStatus("Could not load workflow");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function loadTemplates() {
+    try {
+      const payload = await api("api/workflow/templates");
+      const select = $("workflow-template");
+      select.innerHTML = '<option value="">Templates…</option>' +
+        (payload.templates || []).map((item) =>
+          '<option value="' + S.esc(item.id) + '">' + S.esc(item.name) + "</option>").join("");
+    } catch (_) {
+      $("workflow-template").hidden = true;
+    }
+  }
+
+  async function loadTemplate(id) {
+    if (!id) return;
+    try {
+      const payload = await api("api/workflow/templates");
+      const template = (payload.templates || []).find((item) => item.id === id);
+      if (!template) return;
+      state.slug = null;
+      state.graph = template.graph;
+      await buildFrame(template.graph);
+      setStatus((template.name || "Template") + " loaded · " + ((template.graph.nodes || []).length) + " nodes");
+      $("workflow-select").value = "";
+    } catch (error) {
+      toast(error.message, true);
     }
   }
 
@@ -337,6 +381,20 @@
       if (event.target.value) loadWorkflow(event.target.value);
     });
     $("workflow-new").addEventListener("click", newWorkflow);
+    $("workflow-template").addEventListener("change", (event) => loadTemplate(event.target.value));
+    const toolbar = document.querySelector(".canvas-toolbar");
+    toolbar.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      toolbar.classList.add("drop-ready");
+    });
+    toolbar.addEventListener("dragleave", () => toolbar.classList.remove("drop-ready"));
+    toolbar.addEventListener("drop", (event) => {
+      event.preventDefault();
+      toolbar.classList.remove("drop-ready");
+      if (event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files.length) {
+        uploadDroppedFiles(event.dataTransfer.files);
+      }
+    });
     $("workflow-save").addEventListener("click", async () => {
       if (!state.graph) {
         toast("Nothing to save yet.", true);
@@ -438,6 +496,7 @@
       bind();
       try {
         state.catalog = await api("api/workflow/catalog");
+      loadTemplates().catch(() => {});
         const count = (state.catalog.nodes || []).length;
         const models = (state.catalog.models || []).length;
         setStatus("Catalog ready · " + count + " nodes · " + models + " models");

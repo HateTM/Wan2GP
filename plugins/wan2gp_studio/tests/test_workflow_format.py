@@ -524,3 +524,25 @@ def test_output_sidecar_never_touches_files_outside_output_root(tmp_path, monkey
     compat._write_output_sidecar(inside, "run-1", "Graph")
     data = json.loads(inside.with_suffix(".json").read_text(encoding="utf-8"))
     assert data["workflow"]["run_id"] == "run-1"
+
+
+def test_builtin_templates_import_cleanly(tmp_path, monkeypatch):
+    """The toolbar templates must normalize and validate against the plugin's
+    own schema: a template that fails import is a broken user experience."""
+    _isolated_wanflow_root(tmp_path, monkeypatch)
+    plugin = WanGPStudioPlugin()
+    plugin.server_config = {
+        "image_save_path": str(tmp_path / "images"),
+        "save_path": str(tmp_path / "videos"),
+        "audio_save_path": str(tmp_path / "audio"),
+    }
+    client = TestClient(plugin.create_web_app())
+    templates = client.get("/api/workflow/templates").json()["templates"]
+    by_id = {item["id"]: item for item in templates}
+    assert {"template-t2v", "template-i2v", "template-t2i"} <= set(by_id)
+    for template_id in ("template-t2v", "template-i2v", "template-t2i"):
+        imported = client.post(
+            "/api/workflow/import", json={"graph": by_id[template_id]["graph"], "name": template_id}
+        )
+        assert imported.status_code == 200, (template_id, imported.text)
+        assert imported.json()["unknown_nodes"] == []

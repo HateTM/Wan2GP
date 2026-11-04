@@ -286,11 +286,17 @@
       const cancel = status === "completed" || status === "failed" || status === "cancelled" ? "" : '<button class="cancel-job" data-cancel="' + esc(job.id) + '">Cancel</button>';
       // Generation History: a finished job can be repeated with its original settings
       const repeat = status === "completed" || status === "failed" ? '<button class="cancel-job" data-repeat="' + esc(job.id) + '">Repeat</button>' : "";
+      const files = (job.generated_files || []).slice(0, 3);
+      const filesHtml = files.length
+        ? '<div class="queue-files"><button class="queue-file" data-open-gallery="' + esc(job.id) + '">View ' + files.length +
+          ' result(s) in Gallery</button></div>' : "";
       return '<article class="queue-card"><div class="queue-card-top"><span class="queue-card-title">' + esc(job.model_type) +
         '</span><span class="queue-state' + cls + '">' + esc(status) + '</span></div><div class="queue-card-message">' +
         esc(job.message || job.prompt || "") + '</div><div class="queue-progress"><span style="width:' +
-        Math.max(0, Math.min(100, Number(job.progress) || 0)) + '%"></span></div>' + repeat + cancel + '</article>';
+        Math.max(0, Math.min(100, Number(job.progress) || 0)) + '%"></span></div>' + filesHtml + repeat + cancel + '</article>';
     }).join("");
+    $("queue-list").querySelectorAll("[data-cancel]").forEach((button) => button.addEventListener("click", () => cancelJob(button.dataset.cancel)));
+    $("queue-list").querySelectorAll("[data-repeat]").forEach((button) => button.addEventListener("click", () => repeatJob(button.dataset.repeat)));
     $("queue-list").querySelectorAll("[data-cancel]").forEach((button) => button.addEventListener("click", () => cancelJob(button.dataset.cancel)));
     $("queue-list").querySelectorAll("[data-repeat]").forEach((button) => button.addEventListener("click", () => repeatJob(button.dataset.repeat)));
   }
@@ -303,6 +309,9 @@
       renderJobs();
     } catch (_) {}
   }
+
+  $("queue-list").querySelectorAll("[data-open-gallery]").forEach((button) =>
+    button.addEventListener("click", () => setView("gallery")));
 
   async function repeatJob(jobId) {
     try {

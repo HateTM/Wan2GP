@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 import re
 import subprocess
 import threading
@@ -283,6 +284,35 @@ class PluginHealthService:
         except Exception:
             return None
 
+    def _record_history(self, items: list[dict[str, Any]]) -> None:
+        """Append a compact scan summary to workspaces/studio_plugin_health.json
+        (last 50 scans) so update/rollback patterns stay observable."""
+        try:
+            root = Path(self._plugins_root()).resolve().parent.parent
+            history_path = root / "workspaces" / "studio_plugin_health.json"
+            history_path.parent.mkdir(parents=True, exist_ok=True)
+            entries = []
+            if history_path.is_file():
+                try:
+                    loaded = json.loads(history_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, list):
+                        entries = loaded
+                except ValueError:
+                    entries = []
+            states: dict[str, int] = {}
+            for item in items:
+                states[item.get("state") or "unknown"] = states.get(item.get("state") or "unknown", 0) + 1
+            entries.append({
+                "at": time.time(),
+                "scanned": len(items),
+                "states": states,
+            })
+            history_path.write_text(
+                json.dumps(entries[-50:], ensure_ascii=False, indent=1), encoding="utf-8"
+            )
+        except Exception as exc:
+            logger.warning("Plugin health history write failed: %s", exc)
+
     def _run_scan(self) -> dict[str, Any]:
         started = self._clock()
         error: str | None = None
@@ -295,6 +325,7 @@ class PluginHealthService:
         with self._lock:
             if items:
                 self._items = items
+                self._record_history(items)
             elif not self._items:
                 self._items = collect_plugin_health(self._plugins_root(), fetch=False, wangp_version=self._host_version())
             self._last_fetch_at = started

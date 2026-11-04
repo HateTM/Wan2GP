@@ -199,3 +199,17 @@ def test_health_routes_serve_snapshot_and_refresh(tmp_path, monkeypatch):
     assert payload["plugins"][0]["state"] == "built-in"
     refreshed = client.post("/api/plugins/health/refresh").json()
     assert refreshed["status"]["state"] in ("running", "done")
+
+
+def test_scan_history_is_recorded_and_served(tmp_path, monkeypatch):
+    monkeypatch.setenv("STUDIO_PLUGINS_ROOT", str(tmp_path / "plugins"))
+    root = tmp_path / "plugins"
+    builtin = root / "Builtin-Plugin"
+    builtin.mkdir(parents=True)
+    (builtin / "plugin_info.json").write_text(json.dumps({"name": "B", "version": "1.0"}), encoding="utf-8")
+    plugin = WanGPStudioPlugin()
+    plugin.server_config = {}
+    client = TestClient(plugin.create_web_app())
+    assert client.post("/api/plugins/health/refresh").json()["status"]["state"] in ("running", "done")
+    history = client.get("/api/plugins/health/history").json()["history"]
+    assert history and history[0]["states"].get("built-in") == 1
