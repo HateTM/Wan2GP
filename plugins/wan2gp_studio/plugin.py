@@ -26,7 +26,7 @@ from .media_index import (
     media_id_for,
     thumbnail_bytes,
 )
-from .workflow_compat import WorkflowCompat, WorkflowUnavailable
+from .workflow_compat import WorkflowCompat, WorkflowImportError, WorkflowUnavailable
 from .telemetry import Telemetry
 
 
@@ -199,7 +199,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
     def __init__(self) -> None:
         super().__init__()
         self.name = "WanGP Studio"
-        self.version = "0.6.0"
+        self.version = "0.7.0"
         self.description = "Lightweight full-screen workspace for WanGP models, generation and workflows."
         self.type = ["app"]
         self._session = None
@@ -272,7 +272,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
 
     def create_web_app(self):
         from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-        from fastapi.responses import FileResponse, Response, StreamingResponse
+        from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
         from fastapi.staticfiles import StaticFiles
         from starlette.concurrency import run_in_threadpool
 
@@ -644,6 +644,30 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         def workflow_list():
             workflow_gate()
             return workflow.workflows()
+
+        @app.get("/api/workflow/workflows/{slug}/export")
+        def workflow_export(slug: str):
+            workflow_gate()
+            try:
+                payload = workflow.export_workflow(slug)
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail=f"Workflow not found: {slug}") from None
+            return JSONResponse(
+                payload,
+                headers={"Content-Disposition": f'attachment; filename="{slug}.wanflow.json"'},
+            )
+
+        @app.post("/api/workflow/import")
+        async def workflow_import(request: Request):
+            workflow_gate()
+            payload = await request.json()
+            name = payload.get("name") if isinstance(payload, dict) else None
+            try:
+                return workflow.import_workflow(payload, name)
+            except WorkflowImportError as exc:
+                raise HTTPException(status_code=422, detail={"message": str(exc), "report": exc.report}) from exc
+            except WorkflowUnavailable as exc:
+                raise HTTPException(status_code=503, detail={"state": "unavailable", "message": str(exc)}) from exc
 
         @app.get("/api/workflow/workflows/{slug}")
         def workflow_get(slug: str):

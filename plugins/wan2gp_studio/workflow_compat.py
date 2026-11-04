@@ -28,6 +28,14 @@ class WorkflowUnavailable(RuntimeError):
     """Raised when the optional wanflow-ui plugin cannot serve the request."""
 
 
+class WorkflowImportError(ValueError):
+    """Raised when an imported workflow cannot be mapped to the canonical schema."""
+
+    def __init__(self, message: str, *, report: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.report = report or {}
+
+
 def _model_defs(host: Any) -> dict[str, dict[str, Any]]:
     """Same enrichment wanflow-ui applies for its own node library."""
     try:
@@ -249,6 +257,78 @@ class WorkflowCompat:
 
     def delete(self, slug: str) -> None:
         self._graph_store().delete(slug)
+
+    def node_types(self) -> set[str]:
+        try:
+            catalog = self.catalog()
+            return {str(node.get("type")) for node in catalog.get("nodes") or [] if node.get("type")}
+        except Exception:
+            return set()
+
+    def export_workflow(self, slug: str) -> dict[str, Any]:
+        graph = self.load(slug)
+        model = self._module("graph_model")
+        return {
+            "schema": getattr(model, "SCHEMA", "wan2gp-wanflow-ui"),
+            "version": getattr(model, "VERSION", 1),
+            "exported_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "graph": graph,
+        }
+
+    @staticmethod
+    def _looks_like_comfyui(payload: Any) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        if "links" in payload and isinstance(payload.get("nodes"), list):
+            return True
+        prompt = payload.get("prompt")
+        if isinstance(prompt, dict) and prompt:
+            return all(isinstance(value, dict) and "class_type" in value for value in prompt.values())
+        return False
+
+    def import_workflow(self, payload: Any, name: str | None = None) -> dict[str, Any]:
+        """Import a canonical or legacy JSON workflow; unknown nodes stay in the graph."""
+        if not isinstance(payload, dict):
+            raise WorkflowImportError("Import payload must be a JSON object.")
+        graph = payload.get("graph") if isinstance(payload.get("graph"), dict) else payload
+        if self._looks_like_comfyui(payload) or self._looks_like_comfyui(graph):
+            raise WorkflowImportError(
+                "ComfyUI JSON import is not supported yet. Export the workflow as wan2gp-wanflow-ui JSON instead.",
+                report={"format": "comfyui", "supported": False},
+            )
+        model = self._module("graph_model")
+        schema = str(graph.get("schema") or "")
+        legacy_schema = str(getattr(model, "LEGACY_SCHEMA", "wan2gp-workflows-v2"))
+        legacy = schema == legacy_schema or isinstance(graph.get("stages"), list)
+        try:
+            source = graph
+            if legacy and hasattr(model, "migrate_v1_workflow"):
+                source = model.migrate_v1_workflow(graph)
+            normalized = model.normalize_graph(source)
+            validation = self.validate(normalized)
+        except Exception as exc:
+            raise WorkflowImportError(f"Invalid workflow JSON: {exc}") from exc
+        known = self.node_types()
+        unknown = sorted({
+            str(node.get("type"))
+            for node in normalized.get("nodes") or []
+            if node.get("type") and known and str(node.get("type")) not in known
+        })
+        if not validation["ok"]:
+            raise WorkflowImportError(
+                "; ".join(validation["errors"]) or "Invalid workflow",
+                report={"errors": validation["errors"], "legacy": legacy, "unknown_nodes": unknown},
+            )
+        title = str(name or normalized.get("name") or "Imported workflow")
+        saved = self.save(normalized, title)
+        return {
+            "id": saved["id"],
+            "name": normalized.get("name") or title,
+            "legacy": legacy,
+            "unknown_nodes": unknown,
+            "warnings": validation["warnings"],
+            "node_count": len(normalized.get("nodes") or []),
+        }
 
     def validate(self, graph: dict[str, Any]) -> dict[str, Any]:
         model = self._module("graph_model")
