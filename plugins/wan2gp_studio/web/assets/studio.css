@@ -128,3 +128,17 @@ body.select-mode .media-check{display:block}
 .plugin-state.muted{background:rgba(135,147,164,.12);color:var(--muted)}
 .plugin-details{color:var(--muted);font-size:11px;max-width:340px}
 .plugin-empty{text-align:center;color:var(--muted);padding:18px}
+.media-card.skeleton .media-thumb{background:linear-gradient(110deg,#161d29 30%,#1d2634 45%,#161d29 60%);background-size:200% 100%;animation:skeleton-pulse 1.2s linear infinite}
+.media-card.skeleton .media-name,.media-card.skeleton .media-meta{color:transparent}
+@keyframes skeleton-pulse{to{background-position:-200% 0}}
+.upload-panel{flex:1 1 100%;display:grid;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.upload-head{display:flex;align-items:center;justify-content:space-between;font-size:10px;font-weight:750;letter-spacing:.12em;color:#77869a}
+.upload-row{display:grid;grid-template-columns:minmax(120px,1fr) 130px auto auto;gap:10px;align-items:center;font-size:11px}
+.upload-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.upload-meter{height:6px;border-radius:4px;background:#1a2330;overflow:hidden}
+.upload-fill{display:block;height:100%;background:var(--accent);transition:width .2s}
+.upload-status{color:var(--muted);min-width:70px;text-align:right}
+.upload-status.done{color:var(--green)}
+.upload-status.failed{color:var(--red)}
+.upload-action{border:0;background:transparent;color:var(--muted);font-size:12px;padding:2px 5px;border-radius:5px}
+.upload-action:hover{background:#1a2330;color:var(--text)}

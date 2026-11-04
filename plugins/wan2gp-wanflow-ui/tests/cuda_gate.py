@@ -11,6 +11,7 @@ torch at import time. The gate must distinguish two very different situations:
 from __future__ import annotations
 
 import importlib
+import os
 
 #: Test modules whose import chain reaches mmgp; only skipped when CUDA is
 #: genuinely unavailable.
@@ -59,10 +60,18 @@ def runner_import_or_none() -> Exception | None:
 def collect_ignore_or_raise() -> list[str]:
     """The conftest decision, in one testable function.
 
-    - no usable CUDA -> the CUDA-dependent modules are ignored (skipped);
+    - no usable CUDA -> the CUDA-dependent modules are ignored (skipped),
+      unless ``WANFLOW_REQUIRE_CUDA=1``: the strict GPU acceptance run then
+      refuses to skip - a missing GPU there is a configuration error;
     - CUDA available -> the import must succeed; a failure is re-raised so
       the run fails instead of hiding behind green skips."""
     if not cuda_ready():
+        if os.environ.get("WANFLOW_REQUIRE_CUDA") == "1":
+            raise RuntimeError(
+                "WANFLOW_REQUIRE_CUDA=1 but no CUDA-enabled torch with a usable "
+                "device is available; the strict GPU acceptance run refuses to "
+                "skip the heavy modules."
+            )
         return list(CUDA_DEPENDENT_MODULES)
     failure = runner_import_or_none()
     if failure is not None:

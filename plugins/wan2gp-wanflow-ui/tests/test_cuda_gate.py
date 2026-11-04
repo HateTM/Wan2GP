@@ -90,6 +90,26 @@ def test_gate_fails_when_cuda_ready_but_import_broken(monkeypatch):
         cuda_gate.collect_ignore_or_raise()
 
 
+def test_require_cuda_refuses_to_skip_without_gpu(monkeypatch):
+    """WANFLOW_REQUIRE_CUDA=1: a missing GPU is a configuration error, not a
+    legitimate skip - the strict acceptance run must fail loudly."""
+    monkeypatch.setattr(sys.modules["cuda_gate"], "cuda_ready", lambda: False)
+    monkeypatch.setenv("WANFLOW_REQUIRE_CUDA", "1")
+    import cuda_gate
+
+    with pytest.raises(RuntimeError, match="WANFLOW_REQUIRE_CUDA"):
+        cuda_gate.collect_ignore_or_raise()
+
+
+def test_require_cuda_runs_normally_when_ready(monkeypatch):
+    monkeypatch.setattr(sys.modules["cuda_gate"], "cuda_ready", lambda: True)
+    monkeypatch.setattr(sys.modules["cuda_gate"], "runner_import_or_none", lambda: None)
+    monkeypatch.setenv("WANFLOW_REQUIRE_CUDA", "1")
+    import cuda_gate
+
+    assert cuda_gate.collect_ignore_or_raise() == []
+
+
 def test_gate_ignores_nothing_when_cuda_ready_and_import_ok(monkeypatch):
     monkeypatch.setattr(sys.modules["cuda_gate"], "cuda_ready", lambda: True)
     monkeypatch.setattr(sys.modules["cuda_gate"], "runner_import_or_none", lambda: None)

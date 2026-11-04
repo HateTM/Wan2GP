@@ -8,16 +8,21 @@
   const toast = S.toast;
 
   const PAGE = 200;
+  // Memory bound: only this many pages around the viewport stay in memory.
+  // Scrolling back refetches evicted pages on demand (see loadPage / render).
+  const KEEP_PAGES = 6;
+  // Selection ids are small, but the set is capped so a runaway select-all
+  // drag cannot grow without limit either.
+  const MAX_SELECTION = 1000;
   const GAP = 12;
   const KIND_LABEL = { image: "IMAGE", video: "VIDEO", audio: "AUDIO", world: "WORLD", "3d": "3D", app: "APP" };
   const META_ONLY_KEYS = ["output_role", "model_filename", "generation_time", "creation_date", "creation_timestamp"];
 
   const state = {
-    items: [],
+    pages: new Map(),
+    fetching: new Set(),
+    generation: 0,
     total: 0,
-    offset: 0,
-    loading: false,
-    loadedOnce: false,
     active: false,
     kind: "",
     query: "",
@@ -38,6 +43,17 @@
     sendBridge: true,
     ticking: false
   };
+
+  function itemAt(index) {
+    const page = state.pages.get((index / PAGE) | 0);
+    return page ? page[index % PAGE] : null;
+  }
+
+  function cachedCount() {
+    let count = 0;
+    for (const page of state.pages.values()) count += page.length;
+    return count;
+  }
 
   function fmtSize(bytes) {
     const value = Number(bytes) || 0;
@@ -79,12 +95,12 @@
       element.textContent = "Media API unavailable: " + state.error;
       return;
     }
-    if (state.loading && !state.items.length) {
+    if (state.fetching.size && !state.total) {
       element.hidden = false;
       element.textContent = "Indexing media roots…";
       return;
     }
-    if (!state.items.length) {
+    if (!state.total && !state.fetching.size) {
       element.hidden = false;
       element.textContent = state.query || state.kind
         ? "No media matches the current filters."
@@ -94,42 +110,64 @@
     element.hidden = true;
   }
 
-  async function load(reset) {
-    if (state.loading) return;
-    state.loading = true;
-    if (reset) {
-      state.items = [];
-      state.total = 0;
-      state.offset = 0;
-      state.error = null;
-      state.cards.clear();
-      $("gallery-window").replaceChildren();
-      $("gallery-spacer").style.height = "0px";
-      renderEmpty();
+  function updateSummary() {
+    const count = $("gallery-nav-count");
+    count.hidden = false;
+    count.textContent = String(state.total);
+    $("gallery-summary").textContent =
+      state.total + " items · " + cachedCount() + " in memory · WanGP output roots";
+  }
+
+  function evictDistantPages(centerPage) {
+    if (state.pages.size <= KEEP_PAGES * 2 + 1) return;
+    for (const key of Array.from(state.pages.keys())) {
+      if (Math.abs(key - centerPage) > KEEP_PAGES) state.pages.delete(key);
     }
+  }
+
+  async function loadPage(page) {
+    if (page < 0 || (state.total && page * PAGE >= state.total)) return;
+    if (state.pages.has(page) || state.fetching.has(page)) return;
+    const generation = state.generation;
+    state.fetching.add(page);
+    renderEmpty();
     try {
-      const params = new URLSearchParams({ limit: PAGE, offset: state.offset, sort: state.sort });
+      const params = new URLSearchParams({ limit: PAGE, offset: page * PAGE, sort: state.sort });
       if (state.kind) params.set("kind", state.kind);
       if (state.query.trim()) params.set("q", state.query.trim());
-      const page = await api("api/media?" + params.toString());
-      state.total = Number(page.total) || 0;
-      state.items = reset ? page.items : state.items.concat(page.items);
-      state.offset = state.items.length;
-      state.loadedOnce = true;
-      const count = $("gallery-nav-count");
-      count.hidden = false;
-      count.textContent = String(state.total);
-      $("gallery-summary").textContent = state.total + " items · " + state.items.length + " loaded · WanGP output roots";
+      const payload = await api("api/media?" + params.toString());
+      if (generation !== state.generation) return; // filters changed mid-flight
+      state.total = Number(payload.total) || 0;
+      state.pages.set(page, payload.items || []);
+      evictDistantPages(page);
+      state.error = null;
+      updateSummary();
       layout();
       render();
     } catch (error) {
+      if (generation !== state.generation) return;
       state.error = error.message;
       $("gallery-summary").textContent = "Media API unavailable";
       renderEmpty();
     } finally {
-      state.loading = false;
-      renderEmpty();
+      state.fetching.delete(page);
     }
+  }
+
+  async function load(reset) {
+    if (!reset) return; // incremental loading is driven by render() -> loadPage()
+    state.generation += 1;
+    state.pages.clear();
+    state.fetching.clear();
+    state.total = 0;
+    state.error = null;
+    state.cards.clear();
+    $("gallery-window").replaceChildren();
+    $("gallery-spacer").style.height = "0px";
+    renderEmpty();
+    // The first two screens eagerly; everything else streams in on scroll.
+    await Promise.all([loadPage(0), loadPage(1)]);
+    renderEmpty();
   }
 
   function layout() {
@@ -140,7 +178,7 @@
     state.cardWidth = cardWidth;
     state.columns = columns;
     state.rowHeight = Math.round(cardWidth * 9 / 16) + 40 + GAP;
-    const rows = Math.ceil(state.items.length / columns);
+    const rows = Math.ceil(state.total / columns);
     $("gallery-spacer").style.height = rows * state.rowHeight + "px";
     const windowEl = $("gallery-window");
     windowEl.style.gridTemplateColumns = "repeat(" + columns + ", " + cardWidth + "px)";
@@ -150,13 +188,23 @@
 
   function calibrate() {
     const card = $("gallery-window").firstElementChild;
-    if (!card) return;
+    if (!card || card.classList.contains("skeleton")) return;
     const measured = card.getBoundingClientRect().height + GAP;
     if (measured > 60 && Math.abs(measured - state.rowHeight) > 2) {
       state.rowHeight = measured;
-      const rows = Math.ceil(state.items.length / state.columns);
+      const rows = Math.ceil(state.total / state.columns);
       $("gallery-spacer").style.height = rows * state.rowHeight + "px";
     }
+  }
+
+  function skeletonCard() {
+    const card = document.createElement("div");
+    card.className = "media-card skeleton";
+    card.setAttribute("aria-hidden", "true");
+    card.innerHTML =
+      '<span class="media-thumb"></span><span class="media-caption">' +
+      '<span class="media-name">&nbsp;</span><span class="media-meta">&nbsp;</span></span>';
+    return card;
   }
 
   function buildCard(item) {
@@ -199,12 +247,16 @@
     const firstRow = Math.max(0, Math.floor(viewport.scrollTop / rowHeight) - 1);
     const rowsVisible = Math.ceil(viewport.clientHeight / rowHeight) + 3;
     const start = firstRow * state.columns;
-    const end = Math.min(state.items.length, start + rowsVisible * state.columns);
+    const end = Math.min(state.total, start + rowsVisible * state.columns);
     const windowEl = $("gallery-window");
     const nodes = [];
     const keep = new Set();
     for (let index = start; index < end; index += 1) {
-      const item = state.items[index];
+      const item = itemAt(index);
+      if (!item) {
+        nodes.push(skeletonCard());
+        continue;
+      }
       keep.add(item.id);
       let card = state.cards.get(item.id);
       if (!card) {
@@ -222,8 +274,13 @@
     windowEl.replaceChildren.apply(windowEl, nodes);
     windowEl.style.transform = "translateY(" + firstRow * rowHeight + "px)";
     calibrate();
-    const nearBottom = viewport.scrollTop + viewport.clientHeight > viewport.scrollHeight - 640;
-    if (nearBottom && !state.loading && state.items.length < state.total) load(false);
+    // Fetch (or refetch, after eviction) every page the viewport touches plus
+    // one page of head-room in both directions; loadPage() deduplicates.
+    if (state.total) {
+      const firstPage = Math.max(0, Math.floor(start / PAGE) - 1);
+      const lastPage = Math.floor(Math.max(0, end - 1) / PAGE) + 1;
+      for (let page = firstPage; page <= lastPage; page += 1) loadPage(page);
+    }
   }
 
   function onScroll() {
@@ -236,6 +293,10 @@
   }
 
   function toggleSelection(id, card) {
+    if (!state.selected.has(id) && state.selected.size >= MAX_SELECTION) {
+      toast("Selection is capped at " + MAX_SELECTION + " items.", true);
+      return;
+    }
     if (state.selected.has(id)) state.selected.delete(id);
     else state.selected.add(id);
     card.classList.toggle("selected", state.selected.has(id));
@@ -558,24 +619,133 @@
     toast("Settings loaded into the workflow inspector.");
   }
 
-  async function uploadFiles(files) {
+  // -- Upload Center: bounded-parallelism queue with per-file progress,
+  // retry and cancel. The backend streams to disk; the frontend only guards
+  // against flooding it with a whole drag-and-drop batch at once.
+  const UPLOAD_CONCURRENCY = 2;
+  const uploadState = { queue: [], running: 0, done: 0 };
+
+  function enqueueUploads(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
-    let done = 0;
     for (const file of list) {
-      const body = new FormData();
-      body.append("file", file);
-      try {
-        const response = await fetch("api/media/upload", { method: "POST", body, credentials: "same-origin" });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(payload.detail || "Upload failed (" + response.status + ")");
-        done += 1;
-      } catch (error) {
-        toast(file.name + ": " + error.message, true);
-      }
+      uploadState.queue.push({ file, status: "queued", percent: 0, error: null, xhr: null, id: Math.random().toString(36).slice(2) });
     }
-    if (done) toast("Uploaded " + done + " file(s).");
-    if (done) await load(true);
+    renderUploadRows();
+    pumpUploads();
+  }
+
+  function uploadRow(entry) {
+    return $("gallery-upload-rows").querySelector('[data-upload="' + entry.id + '"]');
+  }
+
+  function uploadRowHtml(entry) {
+    const state_label = { queued: "Queued", uploading: entry.percent + "%", done: "Done", failed: "Failed", cancelled: "Cancelled" }[entry.status] || entry.status;
+    const actions =
+      entry.status === "uploading"
+        ? '<button class="upload-action" data-act="cancel" title="Cancel upload">✕</button>'
+        : entry.status === "done"
+          ? '<button class="upload-action" data-act="remove" title="Remove from list">✕</button>'
+          : '<button class="upload-action" data-act="retry" title="Retry upload">↻</button><button class="upload-action" data-act="remove" title="Remove from list">✕</button>';
+    return (
+      '<div class="upload-line"><span class="upload-name" title="' + esc(entry.file.name) + '">' + esc(entry.file.name) + "</span>" +
+      '<span class="upload-meter"><span class="upload-fill" style="width:' + (entry.status === "done" ? 100 : entry.percent) + '%"></span></span>' +
+      '<span class="upload-status ' + entry.status + '">' + esc(state_label) + (entry.error ? " · " + esc(entry.error) : "") + "</span>" + actions + "</div>"
+    );
+  }
+
+  function renderUploadRows() {
+    const rows = $("gallery-upload-rows");
+    rows.replaceChildren();
+    for (const entry of uploadState.queue) {
+      const row = document.createElement("div");
+      row.className = "upload-row";
+      row.dataset.upload = entry.id;
+      row.innerHTML = uploadRowHtml(entry);
+      row.querySelector('[data-act="cancel"]').addEventListener("click", () => {
+        if (entry.xhr) entry.xhr.abort();
+        else { entry.status = "cancelled"; renderUploadRows(); pumpUploads(); }
+      });
+      row.querySelector('[data-act="retry"]').addEventListener("click", () => {
+        entry.status = "queued";
+        entry.error = null;
+        renderUploadRows();
+        pumpUploads();
+      });
+      row.querySelector('[data-act="remove"]').addEventListener("click", () => {
+        uploadState.queue = uploadState.queue.filter((item) => item !== entry);
+        renderUploadRows();
+        pumpUploads();
+      });
+      rows.appendChild(row);
+    }
+    const panel = $("gallery-uploads");
+    panel.hidden = uploadState.queue.length === 0;
+    const active = uploadState.queue.filter((item) => item.status === "queued" || item.status === "uploading").length;
+    $("gallery-upload-title").textContent =
+      "Uploads · " + active + " active · " + uploadState.done + " done";
+  }
+
+  function updateUploadRow(entry) {
+    const row = uploadRow(entry);
+    if (row) row.innerHTML = uploadRowHtml(entry);
+    renderUploadRows(); // keep the counters in the panel header honest
+  }
+
+  function pumpUploads() {
+    while (uploadState.running < UPLOAD_CONCURRENCY) {
+      const entry = uploadState.queue.find((item) => item.status === "queued");
+      if (!entry) break;
+      startUpload(entry);
+    }
+  }
+
+  function startUpload(entry) {
+    entry.status = "uploading";
+    entry.percent = 0;
+    entry.error = null;
+    uploadState.running += 1;
+    const xhr = new XMLHttpRequest();
+    entry.xhr = xhr;
+    xhr.responseType = "json";
+    xhr.open("POST", "api/media/upload", true);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        entry.percent = Math.round((event.loaded / event.total) * 100);
+        updateUploadRow(entry);
+      }
+    };
+    xhr.onerror = () => finishUpload(entry, new Error("Network error"));
+    xhr.onabort = () => finishUpload(entry, new Error("cancelled"), { cancelled: true });
+    xhr.onload = () => {
+      const payload = xhr.response || {};
+      if (xhr.status >= 200 && xhr.status < 300) finishUpload(entry, null);
+      else finishUpload(entry, new Error(payload.detail || "Upload failed (" + xhr.status + ")"));
+    };
+    const body = new FormData();
+    body.append("file", entry.file);
+    xhr.send(body);
+  }
+
+  function finishUpload(entry, error, opts = {}) {
+    uploadState.running = Math.max(0, uploadState.running - 1);
+    entry.xhr = null;
+    if (error) {
+      entry.status = opts.cancelled ? "cancelled" : "failed";
+      entry.error = opts.cancelled ? null : error.message;
+      entry.percent = 0;
+    } else {
+      entry.status = "done";
+      entry.percent = 100;
+      uploadState.done += 1;
+    }
+    updateUploadRow(entry);
+    const pending = uploadState.queue.some((item) => item.status === "queued" || item.status === "uploading");
+    if (!pending && uploadState.done) {
+      toast("Uploaded " + uploadState.done + " file(s).");
+      uploadState.done = 0;
+      load(true); // the queue drained: bring the new files into the gallery
+    }
   }
 
   function bind() {
@@ -609,8 +779,17 @@
     });
     $("gallery-upload").addEventListener("click", () => $("gallery-file").click());
     $("gallery-file").addEventListener("change", (event) => {
-      uploadFiles(event.target.files);
+      enqueueUploads(event.target.files);
       event.target.value = "";
+    });
+    $("gallery-upload-clear").addEventListener("click", () => {
+      for (const entry of uploadState.queue) {
+        if (entry.xhr) entry.xhr.abort();
+      }
+      uploadState.queue = uploadState.queue.filter((item) => item.status === "uploading");
+      uploadState.done = 0;
+      renderUploadRows();
+      pumpUploads();
     });
     const viewport = $("gallery-viewport");
     viewport.addEventListener("dragover", (event) => {
@@ -624,7 +803,7 @@
     viewport.addEventListener("drop", (event) => {
       event.preventDefault();
       $("gallery-drop").hidden = true;
-      uploadFiles(event.dataTransfer && event.dataTransfer.files);
+      enqueueUploads(event.dataTransfer && event.dataTransfer.files);
     });
     $("lightbox-close").addEventListener("click", closeLightbox);
     $("lightbox").addEventListener("click", (event) => {
@@ -654,7 +833,7 @@
 
   function activate() {
     state.active = true;
-    if (!state.loadedOnce) load(true);
+    if (!state.pages.size) load(true);
     else {
       layout();
       render();
