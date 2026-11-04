@@ -26,6 +26,7 @@ from .media_index import (
     media_id_for,
     thumbnail_bytes,
 )
+from .workflow_compat import WorkflowCompat, WorkflowUnavailable
 
 
 MEDIA_UPLOAD_MAX_BYTES = 512 * 1024 * 1024
@@ -62,6 +63,16 @@ def _unique_destination(directory: str, name: str) -> str:
         if not os.path.exists(candidate):
             return candidate
         counter += 1
+
+
+KNOWN_PLUGINS = {
+    "wan2gp-wanflow-ui": {"integration": "L2", "capabilities": ["workflow.catalog", "workflow.run"], "license": "Apache-2.0"},
+    "wan2gp-status-pro": {"integration": "L2 (data)", "capabilities": ["telemetry.sources"], "license": "public-domain"},
+    "models_manager": {"integration": "L2 (bundled)", "capabilities": ["models.inventory"], "license": "project"},
+    "ImageSuite-Wan2GP": {"integration": "L1", "capabilities": [], "license": "WanGP-Community-2.0"},
+    "wan2gp-lora-manager": {"integration": "L1", "capabilities": [], "license": "none"},
+    "wan2gp-queue-editor": {"integration": "L1", "capabilities": [], "license": "none"},
+}
 
 
 class _JobRecord:
@@ -184,6 +195,18 @@ class WanGPStudioPlugin(WAN2GPPlugin):
 
     def setup_ui(self) -> None:
         self.request_global("server_config")
+        self.request_global("app")
+        for name in (
+            "list_model_defs",
+            "get_model_def",
+            "get_base_model_type",
+            "get_parent_model_type",
+            "get_model_family",
+            "get_default_settings",
+            "get_lora_dir",
+            "get_resolution_choices",
+        ):
+            self.request_global(name)
         self.register_web_app("/studio", self.create_web_app)
 
     def _get_session(self):
@@ -195,6 +218,9 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 # Do not initialize another runtime. Join the already-running WebUI queue.
                 self._session = self.deepy.web_session()
         return self._session
+
+    def get_session(self):
+        return self._get_session()
 
     def _media_roots(self) -> list[str]:
         """Output roots of the installed WanGP plus optional media folders."""
@@ -478,6 +504,176 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 filename=entry["name"],
                 content_disposition_type="inline",
             )
+
+        workflow = WorkflowCompat(self, plugins_root=os.environ.get("STUDIO_PLUGINS_ROOT") or None)
+
+        def workflow_gate():
+            if not workflow.available():
+                raise HTTPException(status_code=503, detail={
+                    "state": "not_installed",
+                    "plugin": "wan2gp-wanflow-ui",
+                    "message": "WanFlow UI is not installed. Install it from the WanGP Plugin Manager, then restart.",
+                })
+            return workflow
+
+        @app.get("/api/environment")
+        def environment():
+            registry = {}
+            manager = getattr(getattr(self, "app", None), "plugin_manager", None)
+            if manager is not None:
+                try:
+                    registry = manager.get_all_plugins() or {}
+                except Exception:
+                    registry = {}
+            plugins_root = Path(__file__).resolve().parents[1]
+            entries = []
+            for plugin_id, meta in KNOWN_PLUGINS.items():
+                plugin = registry.get(plugin_id)
+                installed = (plugins_root / plugin_id).is_dir()
+                entries.append({
+                    "id": plugin_id,
+                    "state": "enabled" if plugin is not None else ("disabled" if installed else "not_installed"),
+                    "version": getattr(plugin, "version", None),
+                    "integration": meta["integration"],
+                    "capabilities": meta["capabilities"],
+                    "license": meta["license"],
+                })
+            for plugin_id, plugin in sorted(registry.items()):
+                if plugin_id in KNOWN_PLUGINS:
+                    continue
+                entries.append({
+                    "id": plugin_id,
+                    "state": "enabled",
+                    "version": getattr(plugin, "version", None),
+                    "integration": "native",
+                    "capabilities": [],
+                    "license": None,
+                })
+            return {
+                "core": {"version": getattr(self, "wan2gp_version", None) or "unknown", "runtime": "WanGP WebUI"},
+                "plugins": entries,
+            }
+
+        @app.get("/api/workflow/status")
+        def workflow_status():
+            return workflow.info()
+
+        @app.get("/api/workflow/catalog")
+        def workflow_catalog():
+            workflow_gate()
+            try:
+                return workflow.catalog()
+            except WorkflowUnavailable as exc:
+                raise HTTPException(status_code=503, detail={"state": "unavailable", "message": str(exc)}) from exc
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"Could not build the workflow catalog: {exc}") from exc
+
+        @app.get("/api/workflow/workflows")
+        def workflow_list():
+            workflow_gate()
+            return workflow.workflows()
+
+        @app.get("/api/workflow/workflows/{slug}")
+        def workflow_get(slug: str):
+            workflow_gate()
+            try:
+                return workflow.load(slug)
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail=f"Workflow not found: {slug}") from None
+
+        @app.put("/api/workflow/workflows/{slug}")
+        async def workflow_save(slug: str, request: Request):
+            workflow_gate()
+            payload = await request.json()
+            graph = payload.get("graph") if isinstance(payload, dict) else None
+            if not isinstance(graph, dict):
+                raise HTTPException(status_code=400, detail="Request must contain a graph object.")
+            try:
+                return workflow.save(graph, payload.get("name") or slug)
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid workflow: {exc}") from exc
+
+        @app.delete("/api/workflow/workflows/{slug}")
+        def workflow_delete(slug: str):
+            workflow_gate()
+            workflow.delete(slug)
+            return {"deleted": slug}
+
+        @app.post("/api/workflow/validate")
+        async def workflow_validate(request: Request):
+            workflow_gate()
+            payload = await request.json()
+            graph = payload.get("graph") if isinstance(payload, dict) else None
+            if not isinstance(graph, dict):
+                raise HTTPException(status_code=400, detail="Request must contain a graph object.")
+            try:
+                return workflow.validate(graph)
+            except WorkflowUnavailable as exc:
+                raise HTTPException(status_code=503, detail={"state": "unavailable", "message": str(exc)}) from exc
+
+        @app.post("/api/workflow/runs")
+        async def workflow_run(request: Request):
+            payload = await request.json()
+            graph = payload.get("graph") if isinstance(payload, dict) else None
+            if not isinstance(graph, dict):
+                raise HTTPException(status_code=400, detail="Request must contain a graph object.")
+            inputs = payload.get("inputs")
+            if not isinstance(inputs, list):
+                inputs = []
+            workflow_gate()
+            try:
+                return workflow.start_run(graph, inputs)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except WorkflowUnavailable as exc:
+                raise HTTPException(status_code=503, detail={"state": "unavailable", "message": str(exc)}) from exc
+            except Exception as exc:
+                raise HTTPException(status_code=500, detail=f"Could not start the workflow: {exc}") from exc
+
+        @app.get("/api/workflow/runs/{run_id}")
+        def workflow_run_snapshot(run_id: str):
+            snapshot = workflow.snapshot(run_id)
+            if snapshot is None:
+                raise HTTPException(status_code=404, detail="Workflow run not found.")
+            return snapshot
+
+        @app.get("/api/workflow/runs/{run_id}/events")
+        async def workflow_run_events(run_id: str):
+            if workflow.snapshot(run_id) is None:
+                raise HTTPException(status_code=404, detail="Workflow run not found.")
+
+            async def stream():
+                cursor = 0
+                last_beat = time.monotonic()
+                while True:
+                    bundle = workflow.events_after(run_id, cursor)
+                    if bundle is None:
+                        yield "event: end\r\ndata: {}\r\n\r\n"
+                        return
+                    events, latest = bundle
+                    for event in events:
+                        cursor = event["id"]
+                        yield f"id: {cursor}\ndata: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+                    snapshot = workflow.snapshot(run_id)
+                    if snapshot is None or (snapshot["status"] in {"completed", "failed", "cancelled"} and cursor >= latest):
+                        yield "event: end\ndata: {}\n\n"
+                        return
+                    if time.monotonic() - last_beat >= 15:
+                        yield ": keep-alive\n\n"
+                        last_beat = time.monotonic()
+                    await asyncio.sleep(0.35)
+
+            return StreamingResponse(
+                stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        @app.post("/api/workflow/runs/{run_id}/cancel")
+        def workflow_run_cancel(run_id: str):
+            if not workflow.cancel(run_id):
+                raise HTTPException(status_code=404, detail="Workflow run not found.")
+            return {"run_id": run_id, "status": "cancellation_requested"}
 
         @app.get("/api/jobs")
         def list_jobs():
