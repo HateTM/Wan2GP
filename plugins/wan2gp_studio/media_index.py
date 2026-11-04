@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import threading
 import time
 import zipfile
 from typing import Any, Callable, Iterable
+
+logger = logging.getLogger("wangp.studio")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v"}
@@ -268,7 +271,8 @@ class MediaIndex:
                 facts = _audio_facts(entry["path"])
             elif kind == "world":
                 facts = _world_facts(entry["path"])
-        except Exception:
+        except Exception as exc:
+            logger.warning("Media facts failed for %s: %s", entry["path"], exc)
             facts = {}
         with self._lock:
             self._fact_cache[entry["id"]] = (stamp, dict(facts))

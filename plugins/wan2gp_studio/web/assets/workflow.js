@@ -286,7 +286,10 @@
       } catch (error) {
         const host = $("workflow-unavailable");
         host.hidden = false;
-        host.textContent = error.message;
+        const fallbackLink = error.fallback
+          ? ' <a class="model-link" target="_blank" rel="noopener" href="' + S.esc(error.fallback.href || "/") + '">' + S.esc(error.fallback.label || "Open in WanGP") + " ↗</a>"
+          : "";
+        host.innerHTML = S.esc(error.message || "Workflow unavailable") + fallbackLink;
         $("workflow-frame").hidden = true;
         setStatus("Workflow unavailable");
         setBusy(true);

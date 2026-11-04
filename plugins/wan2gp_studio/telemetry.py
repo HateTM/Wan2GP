@@ -8,10 +8,13 @@ polls heavily or drives offloading.
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
 from typing import Any, Callable
+
+logger = logging.getLogger("wangp.studio")
 
 
 class Telemetry:
@@ -79,7 +82,8 @@ class Telemetry:
             except Exception:
                 pass
             return payload
-        except Exception:
+        except Exception as exc:
+            logger.warning("NVML read failed: %s", exc)
             return {"available": False, "source": "nvml-error"}
 
     # -- snapshot ------------------------------------------------------

@@ -4,9 +4,9 @@ import os
 import re
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
+
 
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_DIR = os.path.dirname(TESTS_DIR)
@@ -18,7 +18,7 @@ sys.path.insert(0, REPO_ROOT)
 from fastapi.testclient import TestClient  # noqa: E402
 
 from wan2gp_studio.plugin import WanGPStudioPlugin  # noqa: E402
-from wan2gp_studio.workflow_compat import WorkflowCompat, WorkflowImportError  # noqa: E402
+from wan2gp_studio.workflow_compat import WorkflowCompat  # noqa: E402
 
 GRAPH_MODEL = importlib.import_module("wan2gp-wanflow-ui.graph_model")
 
@@ -131,11 +131,41 @@ def test_unknown_nodes_are_preserved_and_reported(tmp_path):
     assert stored["nodes"][0]["type"] == "mystery_node"
 
 
-def test_comfyui_payload_is_rejected_with_report(tmp_path):
+def test_comfyui_payload_imports_as_opaque(tmp_path):
     compat = _compat(tmp_path)
-    with pytest.raises(WorkflowImportError) as error:
-        compat.import_workflow({"nodes": [{"id": 1, "type": "KSampler"}], "links": []})
-    assert error.value.report.get("format") == "comfyui"
+    imported = compat.import_workflow({
+        "1": {"class_type": "KSampler", "inputs": {"seed": 1, "model": ["5", 0]}},
+        "5": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "m.safetensors"}},
+    })
+    assert imported["id"] == "comfyui-import"
+    assert imported["unknown_nodes"] == ["comfyui_node"]
+    stored = compat.load("comfyui-import")
+    assert [node["type"] for node in stored["nodes"]] == ["comfyui_node", "comfyui_node"]
+    sampler = [node for node in stored["nodes"] if node["params"]["comfyui"]["key"] == "1"][0]
+    assert sampler["params"]["comfyui"]["inputs"]["model"] == ["5", 0]
+
+    exported = compat.export_workflow(imported["id"], fmt="comfyui")
+    assert set(exported["prompt"].keys()) == {"1", "5"}
+    assert exported["prompt"]["1"]["inputs"]["model"] == ["5", 0]
+
+
+def test_version_gate_and_disabled_state(tmp_path):
+    plugins_root = tmp_path / "plugins"
+    plugin_dir = plugins_root / "wan2gp-wanflow-ui"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin.py").write_text("# stub", encoding="utf-8")
+    (plugin_dir / "plugin_info.json").write_text(json.dumps({"version": "0.0.9"}), encoding="utf-8")
+
+    outdated = WorkflowCompat(StubHost(), plugins_root=plugins_root, min_version="0.1.0")
+    assert outdated.state() == "incompatible"
+    assert outdated.available() is False
+
+    disabled = WorkflowCompat(StubHost(), plugins_root=plugins_root, enabled_provider=lambda: False)
+    assert disabled.state() == "disabled"
+    assert disabled.available() is False
+
+    current = WorkflowCompat(StubHost(), plugins_root=plugins_root, min_version="0.0.1")
+    assert current.state() == "available"
 
 
 def test_export_import_routes_against_installed_plugin(tmp_path, monkeypatch):
@@ -146,6 +176,9 @@ def test_export_import_routes_against_installed_plugin(tmp_path, monkeypatch):
         "audio_save_path": str(tmp_path / "audio"),
     }
     client = TestClient(plugin.create_web_app())
+
+    if not os.path.isfile(os.path.join(PLUGINS_ROOT, "wan2gp-wanflow-ui", "plugin.py")):
+        pytest.skip("wanflow-ui not installed")
 
     exported = client.get("/api/workflow/workflows/draft-video-t2v/export")
     assert exported.status_code == 200, exported.text

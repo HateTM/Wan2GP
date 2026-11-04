@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 import importlib
 import json
+import logging
 import sys
 import threading
 import time
@@ -20,6 +21,8 @@ import uuid
 from collections import deque
 from pathlib import Path
 from typing import Any, Callable
+
+logger = logging.getLogger("wangp.studio")
 
 PLUGIN_ID = "wan2gp-wanflow-ui"
 
@@ -151,11 +154,15 @@ class WorkflowCompat:
         plugins_root: str | Path | None = None,
         loader: Callable[[], dict[str, Any]] | None = None,
         output_root: str | Path | None = None,
+        enabled_provider: Callable[[], bool] | None = None,
+        min_version: str = "0.0.0",
     ) -> None:
         self.host = host
         self.plugins_root = Path(plugins_root) if plugins_root else Path(__file__).resolve().parents[1]
         self.plugin_dir = self.plugins_root / PLUGIN_ID
         self._loader = loader
+        self._enabled_provider = enabled_provider
+        self.min_version = str(min_version)
         self._modules: dict[str, Any] | None = None
         self._lock = threading.RLock()
         self._catalog: dict[str, Any] | None = None
@@ -163,28 +170,71 @@ class WorkflowCompat:
         self._runs: dict[str, dict[str, Any]] = {}
         self._run_order: list[str] = []
         self._output_root = Path(output_root) if output_root else self.plugin_dir / "workflow_outputs"
+        self._meta_cache: dict[str, Any] | None = None
 
     # -- discovery -----------------------------------------------------
-    def available(self) -> bool:
-        return self._loader is not None or (self.plugin_dir / "plugin.py").is_file()
+    @staticmethod
+    def _version_tuple(value: Any) -> tuple[int, ...]:
+        parts: list[int] = []
+        for chunk in str(value or "0").replace("-", ".").split("."):
+            digits = ""
+            for character in chunk:
+                if character.isdigit():
+                    digits += character
+                else:
+                    break
+            parts.append(int(digits) if digits else 0)
+        return tuple(parts[:4]) or (0,)
 
-    def info(self) -> dict[str, Any]:
-        meta: dict[str, Any] = {}
+    def _meta(self) -> dict[str, Any]:
+        if self._meta_cache is not None:
+            return self._meta_cache
         info_path = self.plugin_dir / "plugin_info.json"
         if info_path.is_file():
             try:
-                meta = json.loads(info_path.read_text(encoding="utf-8"))
+                self._meta_cache = json.loads(info_path.read_text(encoding="utf-8"))
             except Exception:
-                meta = {}
-        installed = self.available()
+                self._meta_cache = {}
+        return self._meta_cache or {}
+
+    def version(self) -> str:
+        return str(self._meta().get("version") or "0")
+
+    def version_ok(self) -> bool:
+        return self._version_tuple(self.version()) >= self._version_tuple(self.min_version)
+
+    def enabled(self) -> bool:
+        if self._enabled_provider is None:
+            return True
+        try:
+            return bool(self._enabled_provider())
+        except Exception:
+            return False
+
+    def state(self) -> str:
+        installed = self._loader is not None or (self.plugin_dir / "plugin.py").is_file()
+        if not installed:
+            return "not_installed"
+        if not self.enabled():
+            return "disabled"
+        if not self.version_ok():
+            return "incompatible"
+        return "available"
+
+    def available(self) -> bool:
+        return self.state() == "available"
+
+    def info(self) -> dict[str, Any]:
+        meta = self._meta()
         return {
             "id": PLUGIN_ID,
             "name": meta.get("name") or "WanGP WanFlow UI",
             "version": meta.get("version"),
-            "installed": installed,
+            "min_version": self.min_version,
+            "installed": self.state() != "not_installed",
             "integration": "L2",
             "license": "Apache-2.0",
-            "state": "available" if installed else "not_installed",
+            "state": self.state(),
             "path": str(self.plugin_dir),
         }
 
@@ -197,10 +247,9 @@ class WorkflowCompat:
             if self._loader is not None:
                 modules = dict(self._loader())
             else:
-                if not (self.plugin_dir / "plugin.py").is_file():
-                    raise WorkflowUnavailable(
-                        "WanFlow UI is not installed (plugins/wan2gp-wanflow-ui)."
-                    )
+                state = self.state()
+                if state != "available":
+                    raise WorkflowUnavailable(f"WanFlow UI is {state} (plugins/wan2gp-wanflow-ui).")
                 if str(self.plugins_root) not in sys.path:
                     sys.path.insert(0, str(self.plugins_root))
                 modules = {}
@@ -265,9 +314,36 @@ class WorkflowCompat:
         except Exception:
             return set()
 
-    def export_workflow(self, slug: str) -> dict[str, Any]:
+    def export_workflow(self, slug: str, fmt: str = "wanflow") -> dict[str, Any]:
         graph = self.load(slug)
         model = self._module("graph_model")
+        if str(fmt).lower() in ("comfyui", "comfyui-api"):
+            node_keys = {}
+            for node in graph.get("nodes") or []:
+                comfy = (node.get("params") or {}).get("comfyui") if isinstance(node.get("params"), dict) else None
+                if isinstance(comfy, dict) and comfy.get("key"):
+                    node_keys[node.get("id")] = str(comfy["key"])
+            prompt: dict[str, Any] = {}
+            for node in graph.get("nodes") or []:
+                params = node.get("params") if isinstance(node.get("params"), dict) else {}
+                comfy = params.get("comfyui")
+                if not isinstance(comfy, dict) or not comfy.get("key"):
+                    continue
+                inputs = copy.deepcopy(comfy.get("inputs") or {})
+                for value in inputs.values():
+                    if isinstance(value, list) and value and node_keys.get("c" + str(value[0])):
+                        value[0] = node_keys["c" + str(value[0])]
+                prompt[str(comfy["key"])] = {
+                    "class_type": comfy.get("class_type"),
+                    "inputs": inputs,
+                    "_meta": {"title": node.get("title") or comfy.get("class_type")},
+                }
+            if not prompt:
+                raise WorkflowImportError(
+                    "Workflow has no ComfyUI nodes to export.",
+                    report={"format": "comfyui", "nodes": 0},
+                )
+            return {"format": "comfyui-api", "prompt": prompt}
         return {
             "schema": getattr(model, "SCHEMA", "wan2gp-wanflow-ui"),
             "version": getattr(model, "VERSION", 1),
@@ -286,15 +362,72 @@ class WorkflowCompat:
             return all(isinstance(value, dict) and "class_type" in value for value in prompt.values())
         return False
 
+    @staticmethod
+    def _comfy_map(payload: Any) -> dict[str, Any] | None:
+        """Return a ComfyUI API prompt map (class_type entries) when present."""
+        if not isinstance(payload, dict):
+            return None
+        candidates = [payload]
+        prompt = payload.get("prompt")
+        if isinstance(prompt, dict):
+            candidates.insert(0, prompt)
+        for candidate in candidates:
+            if candidate and all(isinstance(value, dict) and "class_type" in value for value in candidate.values()):
+                return candidate
+        return None
+
+    def _import_comfyui(self, prompt: dict[str, Any], name: str | None) -> dict[str, Any]:
+        """Preserve a ComfyUI API graph as opaque nodes (import/export adapter, no execution)."""
+        model = self._module("graph_model")
+        title = str(name or "ComfyUI import")
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        for key, spec in prompt.items():
+            node_id = "c" + str(key)
+            inputs = copy.deepcopy(spec.get("inputs") or {})
+            for value in inputs.values():
+                if isinstance(value, list) and value and str(value[0]) in prompt and str(value[0]) != str(key):
+                    edges.append({
+                        "id": uuid.uuid4().hex,
+                        "source": {"node": "c" + str(value[0]), "port": "out"},
+                        "target": {"node": node_id, "port": "in"},
+                        "type": "",
+                    })
+            nodes.append({
+                "id": node_id,
+                "type": "comfyui_node",
+                "title": str(spec.get("class_type") or key),
+                "params": {"comfyui": {"key": str(key), "class_type": spec.get("class_type"), "inputs": inputs}},
+                "enabled": True,
+            })
+        graph = {"name": title, "nodes": nodes, "edges": edges, "groups": []}
+        normalized = model.normalize_graph(graph)
+        normalized["name"] = title
+        known = self.node_types()
+        unknown = ["comfyui_node"] if known and "comfyui_node" not in known else []
+        saved = self.save(normalized, title)
+        return {
+            "id": saved["id"],
+            "name": normalized.get("name") or title,
+            "legacy": False,
+            "unknown_nodes": unknown,
+            "warnings": ["ComfyUI nodes are preserved as opaque nodes; they are not executable in WanGP yet."],
+            "node_count": len(nodes),
+            "report": {"format": "comfyui", "opaque": True, "executable": False},
+        }
+
     def import_workflow(self, payload: Any, name: str | None = None) -> dict[str, Any]:
         """Import a canonical or legacy JSON workflow; unknown nodes stay in the graph."""
         if not isinstance(payload, dict):
             raise WorkflowImportError("Import payload must be a JSON object.")
         graph = payload.get("graph") if isinstance(payload.get("graph"), dict) else payload
+        comfy = self._comfy_map(payload) or self._comfy_map(graph)
+        if comfy is not None:
+            return self._import_comfyui(comfy, name)
         if self._looks_like_comfyui(payload) or self._looks_like_comfyui(graph):
             raise WorkflowImportError(
-                "ComfyUI JSON import is not supported yet. Export the workflow as wan2gp-wanflow-ui JSON instead.",
-                report={"format": "comfyui", "supported": False},
+                "ComfyUI UI-format JSON is not supported yet; export the ComfyUI API (prompt) JSON instead.",
+                report={"format": "comfyui", "supported": False, "reason": "ui-format"},
             )
         model = self._module("graph_model")
         schema = str(graph.get("schema") or "")
@@ -451,7 +584,7 @@ class WorkflowCompat:
             record["message"] = record["status"].capitalize()
             self._emit(record, "complete", {"status": record["status"], "outputs": record["outputs"]})
             release = getattr(runner, "release_workflow_models", None)
-        except InterruptedError as exc:
+        except InterruptedError:
             record["status"] = "cancelled"
             record["message"] = "Cancelled"
             for node_id, node_state in list(record["nodes"].items()):
@@ -470,8 +603,8 @@ class WorkflowCompat:
             if callable(release):
                 try:
                     release(self.host, graph)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("release_workflow_models failed for run %s: %s", record["id"], exc)
             self._emit(record, "closed", {"run_id": record["id"]})
 
     def snapshot(self, run_id: str) -> dict[str, Any] | None:

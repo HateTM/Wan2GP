@@ -19,7 +19,18 @@
       headers: { "Content-Type": "application/json" }
     }, options));
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.detail || body.message || "Request failed (" + response.status + ")");
+    if (!response.ok) {
+      const detail = body.detail != null ? body.detail : body.message;
+      const message = typeof detail === "string"
+        ? detail
+        : (detail && (detail.message || JSON.stringify(detail))) || "Request failed (" + response.status + ")";
+      const error = new Error(message);
+      if (detail && typeof detail === "object") {
+        error.state = detail.state;
+        error.fallback = detail.fallback;
+      }
+      throw error;
+    }
     return body;
   }
 

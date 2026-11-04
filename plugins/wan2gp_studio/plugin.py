@@ -21,7 +21,6 @@ from .media_index import (
     AUDIO_EXTENSIONS,
     IMAGE_EXTENSIONS,
     VIDEO_EXTENSIONS,
-    WORLD_EXTENSIONS,
     MediaIndex,
     media_id_for,
     thumbnail_bytes,
@@ -199,7 +198,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
     def __init__(self) -> None:
         super().__init__()
         self.name = "WanGP Studio"
-        self.version = "1.0.0"
+        self.version = "1.0.1"
         self.description = "Lightweight full-screen workspace for WanGP models, generation and workflows."
         self.type = ["app"]
         self._session = None
@@ -233,6 +232,16 @@ class WanGPStudioPlugin(WAN2GPPlugin):
 
     def get_session(self):
         return self._get_session()
+
+    def _wanflow_enabled(self) -> bool:
+        """WanFlow UI counts as enabled only when the Plugin Manager loaded it."""
+        manager = getattr(getattr(self, "app", None), "plugin_manager", None)
+        if manager is None:
+            return True  # no registry context (tests): assume installed means usable
+        try:
+            return "wan2gp-wanflow-ui" in (manager.get_all_plugins() or {})
+        except Exception:
+            return False
 
     def _media_roots(self) -> list[str]:
         """Output roots of the installed WanGP plus optional media folders."""
@@ -523,24 +532,31 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             destination = _unique_destination(target_dir, _safe_upload_name(file.filename, extension))
             temp_path = os.path.join(target_dir, f".upload-{uuid.uuid4().hex}.tmp")
             written = 0
+            handle = None
             try:
-                with open(temp_path, "wb") as handle:
-                    while True:
-                        chunk = await file.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        written += len(chunk)
-                        if written > MEDIA_UPLOAD_MAX_BYTES:
-                            raise HTTPException(status_code=413, detail="File is larger than 512 MB")
-                        handle.write(chunk)
-                os.replace(temp_path, destination)
+                handle = await run_in_threadpool(open, temp_path, "wb")
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > MEDIA_UPLOAD_MAX_BYTES:
+                        raise HTTPException(status_code=413, detail="File is larger than 512 MB")
+                    await run_in_threadpool(handle.write, chunk)
+                await run_in_threadpool(handle.close)
+                handle = None
+                await run_in_threadpool(os.replace, temp_path, destination)
             except HTTPException:
+                if handle is not None:
+                    await run_in_threadpool(handle.close)
                 if os.path.exists(temp_path):
-                    os.remove(temp_path)
+                    await run_in_threadpool(os.remove, temp_path)
                 raise
             except Exception as exc:
+                if handle is not None:
+                    await run_in_threadpool(handle.close)
                 if os.path.exists(temp_path):
-                    os.remove(temp_path)
+                    await run_in_threadpool(os.remove, temp_path)
                 raise HTTPException(status_code=500, detail=f"Could not store the uploaded file: {exc}") from exc
             media_index.refresh(force=True)
             entry = media_index.get(media_id_for(destination))
@@ -566,18 +582,30 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 content_disposition_type="inline",
             )
 
-        workflow = WorkflowCompat(self, plugins_root=os.environ.get("STUDIO_PLUGINS_ROOT") or None)
+        workflow = WorkflowCompat(
+            self,
+            plugins_root=os.environ.get("STUDIO_PLUGINS_ROOT") or None,
+            enabled_provider=self._wanflow_enabled,
+            min_version="0.1.0",
+        )
         telemetry = Telemetry(
             jobs_provider=lambda: [record.snapshot() for record in list(jobs.values())],
             workflow_provider=lambda: workflow.recent_runs(),
         )
 
         def workflow_gate():
-            if not workflow.available():
+            state = workflow.state()
+            if state != "available":
+                messages = {
+                    "not_installed": "WanFlow UI is not installed. Install it from the WanGP Plugin Manager, then restart.",
+                    "disabled": "WanFlow UI is installed but disabled. Enable it in the Plugin Manager and restart WanGP.",
+                    "incompatible": f"WanFlow UI {workflow.version()} is older than the supported minimum {workflow.min_version}. Update the plugin.",
+                }
                 raise HTTPException(status_code=503, detail={
-                    "state": "not_installed",
+                    "state": state,
                     "plugin": "wan2gp-wanflow-ui",
-                    "message": "WanFlow UI is not installed. Install it from the WanGP Plugin Manager, then restart.",
+                    "message": messages[state],
+                    "fallback": {"href": "/", "label": "Open WanFlow UI (native tab)"},
                 })
             return workflow
 
@@ -646,12 +674,14 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             return workflow.workflows()
 
         @app.get("/api/workflow/workflows/{slug}/export")
-        def workflow_export(slug: str):
+        def workflow_export(slug: str, format: str = "wanflow"):
             workflow_gate()
             try:
-                payload = workflow.export_workflow(slug)
+                payload = workflow.export_workflow(slug, format)
             except FileNotFoundError:
                 raise HTTPException(status_code=404, detail=f"Workflow not found: {slug}") from None
+            except WorkflowImportError as exc:
+                raise HTTPException(status_code=400, detail={"message": str(exc), "report": exc.report}) from exc
             return JSONResponse(
                 payload,
                 headers={"Content-Disposition": f'attachment; filename="{slug}.wanflow.json"'},

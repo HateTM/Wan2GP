@@ -10,7 +10,6 @@ sys.path.insert(0, REPO_ROOT)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-import wan2gp_studio.telemetry as telemetry_module  # noqa: E402
 from wan2gp_studio.plugin import WanGPStudioPlugin  # noqa: E402
 from wan2gp_studio.telemetry import Telemetry  # noqa: E402
 
