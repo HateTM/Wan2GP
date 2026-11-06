@@ -184,3 +184,37 @@ body.runtime-down .runtime-pill i{background:var(--red)}
   .generate-grid .model-panel{order:1;max-height:280px}
   .generate-grid .generate-form-panel{order:2}
 }
+/* ===== V4.5 tranche 2: Models page, input slots, pane drawers ===== */
+.models-grid{grid-template-columns:minmax(280px,340px) minmax(0,1fr)}
+.models-detail-panel{display:flex;flex-direction:column;min-height:0}
+.models-detail-panel .inspector-content{flex:1;min-height:0}
+.models-detail-panel .inspector-empty{display:grid;place-content:center;gap:8px;padding:40px 16px;text-align:center;color:var(--muted)}
+.models-detail-panel .inspector-empty-icon{font-size:26px;color:var(--accent)}
+#models-detail-availability{font-size:10px;color:var(--muted)}
+/* generate: input media slots */
+.input-slot{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--line-soft)}
+.input-slot-label{min-width:110px;font-size:11px;color:var(--text)}
+.input-slot-label small{color:var(--muted);font-size:9px}
+.input-slot-value{flex:1;font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* workflow panes as drawers: shown ≤1439px, canvas keeps priority */
+.pane-toggle{display:none}
+@media (max-width:1439px){
+  .pane-toggle{display:grid;place-items:center}
+  .workspace{position:relative}
+  .studio-grid{position:relative;grid-template-columns:245px minmax(0,1fr)}
+  body.inspector-open .inspector-panel{display:flex}
+  .canvas-toolbar{position:relative;z-index:40}
+  .inspector-panel{position:absolute;top:0;right:0;bottom:0;width:min(320px,80%);z-index:30;box-shadow:-8px 0 24px rgba(0,0,0,.35);transition:transform .15s ease}
+  body:not(.inspector-open) .inspector-panel{transform:translateX(105%);pointer-events:none}
+  body.library-collapsed .studio-grid{grid-template-columns:minmax(0,1fr)}
+  body.library-collapsed .studio-grid .model-panel{display:none}
+}
+@media (prefers-reduced-motion:reduce){.inspector-panel{transition:none}}
+@media (max-width:1024px){
+  .pane-toggle{display:none}
+  body.inspector-open .inspector-panel{display:flex}
+  body.library-collapsed .studio-grid{grid-template-columns:minmax(0,1fr)}
+  .inspector-panel{position:static;width:auto;transform:none;box-shadow:none;pointer-events:auto}
+  body:not(.inspector-open) .inspector-panel{display:none}
+  body:not(.inspector-open) .studio-grid .inspector-panel{order:3}
+}

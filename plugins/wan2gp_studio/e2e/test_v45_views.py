@@ -99,3 +99,75 @@ def test_hash_aliases_still_route(page):
         # setView is only triggered on load; emulate the router entry point
         page.evaluate(f"window.WanGPStudio.setView('{view}')")
         assert page.evaluate("window.WanGPStudio.getView()") == view
+
+
+def test_models_view_renders_catalog_or_honest_error(page):
+    """MANAGE > Models: the read-only catalog page. The harness has no live
+    registry, so either the list or the explicit 'not loaded' state shows."""
+    page.evaluate("window.WanGPStudio.setView('models')")
+    page.wait_for_selector("#models-view:not([hidden])", timeout=5000)
+    page.wait_for_function(
+        "() => { const l = document.getElementById('models-list'); return l.textContent.length > 0 && !l.textContent.includes('Loading'); }",
+        timeout=20000,
+    )
+    text = page.text_content("#models-list")
+    assert "No matching" in text or "not loaded" in text or "model-card" in (page.locator("#models-list").inner_html())
+    # deep link into Generate with a preselected model: the detail fetch runs
+    # even without a catalog and ends in an honest per-model error state
+    page.evaluate("window.WanGPStudioGenerate.preset('e2e-stub-model')")
+    page.wait_for_function(
+        "() => document.getElementById('generate-state').textContent === 'Could not load model'",
+        timeout=20000,
+    )
+
+
+def test_generate_input_slot_mapping_is_pure(page):
+    """applyInputPath maps a capability role to WanGP's ATTACHMENT_KEYS."""
+    mapping = page.evaluate(
+        """(() => {
+          const f = window.WanGPStudioGenerate.applyInputPath;
+          return {
+            image: f({}, "image", "C:/x/a.png").image_guide,
+            video: f({}, "video", "C:/x/b.mp4").video_guide,
+            audio: f({}, "audio", "C:/x/c.wav").audio_guide,
+            text: "text" in f({}, "text", "C:/x/t.txt"),
+            cleared: f({ image_guide: "old" }, "image", "").image_guide
+          };
+        })()"""
+    )
+    assert mapping["image"] == "C:/x/a.png"
+    assert mapping["video"] == "C:/x/b.mp4"
+    assert mapping["audio"] == "C:/x/c.wav"
+    assert mapping["text"] is False  # text roles never map to an attachment key
+
+
+def test_generate_input_slots_render_from_metadata(page):
+    """With a detail carrying inputs, slots appear per media role with the
+    native attachment key shown."""
+    page.evaluate(
+        """(() => {
+          const detail = {
+            model: { name: "Stub I2V" },
+            metadata: { inputs: ["image", "text"] },
+            defaults: { prompt: "", image_guide: "C:/media/seed.png" },
+            presets: { settings: [] }
+          };
+          window.WanGPStudioGenerate.__renderSlotsForTest = null;
+          // renderInputSlots is internal; drive it through selectModel's path
+          // by faking the API response
+          const original = window.WanGPStudio.api;
+          window.WanGPStudio.api = async (path) => {
+            if (path.startsWith("api/models/")) return detail;
+            return original(path);
+          };
+          return null;
+        })()"""
+    )
+    page.evaluate("window.WanGPStudioGenerate.preset('stub-i2v')")
+    page.wait_for_function(
+        "() => !document.getElementById('generate-inputs').hidden", timeout=10000
+    )
+    slots = page.locator("#generate-input-slots .input-slot")
+    assert slots.count() == 1  # only media roles render, text does not
+    assert "image_guide" in page.text_content("#generate-input-slots")
+    assert "seed.png" in page.text_content("#generate-input-slots")

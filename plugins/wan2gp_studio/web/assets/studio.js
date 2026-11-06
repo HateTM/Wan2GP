@@ -459,6 +459,7 @@
     generate: { nav: "nav-generate", hash: "#generate", label: "Generate", section: "generate-view", mode: "generate-mode", activate: "WanGPStudioGenerate" },
     gallery: { nav: "nav-gallery", hash: "#gallery", label: "Media Center", section: "gallery-view", mode: "gallery-mode", activate: "WanGPStudioGallery" },
     imageeditor: { nav: "nav-imageeditor", hash: "#imageeditor", label: "Image Editor", section: "imageeditor-view", mode: "imageeditor-mode", activate: "WanGPStudioImageEditor" },
+    models: { nav: "nav-models", hash: "#models", label: "Models", section: "models-view", mode: "models-mode", activate: "WanGPStudioModels" },
     queue: { nav: "nav-queue", hash: "#queue", label: "Queue", section: "queue-view", mode: "queue-mode" },
     resources: { nav: "nav-resources", hash: "#resources", label: "Resource Center", section: "resource-view", mode: "resources-mode", activate: "WanGPStudioTelemetry" },
     plugins: { nav: "nav-plugins", hash: "#plugins", label: "Plugins", section: "plugins-view", mode: "plugins-mode", activate: "WanGPStudioPlugins" },
@@ -560,7 +561,17 @@
     $("nav-generate").addEventListener("click", () => setView("generate"));
     $("nav-queue").addEventListener("click", () => setView("queue"));
     $("nav-imageeditor").addEventListener("click", () => setView("imageeditor"));
-    $("nav-models").addEventListener("click", () => setView("workflow"));
+    $("nav-models").addEventListener("click", () => setView("models"));
+    // V4.5 drawers (1024–1439px): the library collapses, the inspector opens
+    // as an overlay so the canvas keeps the visual priority
+    $("library-toggle").addEventListener("click", () => {
+      const collapsed = document.body.classList.toggle("library-collapsed");
+      $("library-toggle").setAttribute("aria-pressed", collapsed ? "false" : "true");
+    });
+    $("inspector-toggle").addEventListener("click", () => {
+      const open = document.body.classList.toggle("inspector-open");
+      $("inspector-toggle").setAttribute("aria-pressed", open ? "true" : "false");
+    });
     $("queue-refresh").addEventListener("click", refreshJobs);
     $("drawer-toggle").addEventListener("click", () => {
       const drawer = $("execution-drawer");

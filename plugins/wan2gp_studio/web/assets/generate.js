@@ -7,6 +7,90 @@
   const state = { filter: "all", query: "", models: [], selectedModel: null, detail: null, presets: [] };
   const S = window.WanGPStudio;
 
+  // Input media slots per model capability. The keys are WanGP's native
+  // ATTACHMENT_KEYS (wgp.py): the queue consumes them as-is, so nothing
+  // invented here reaches the backend.
+  const INPUT_KEY_BY_ROLE = { image: "image_guide", video: "video_guide", audio: "audio_guide" };
+  const ACCEPT_BY_ROLE = { image: "image/*", video: "video/*", audio: "audio/*" };
+
+  function modelInputs(detail) {
+    const meta = detail.metadata || {};
+    const schema = detail.schema || {};
+    const inputs = meta.inputs || schema.inputs || [];
+    return Array.isArray(inputs) ? inputs.map(String) : [];
+  }
+
+  // pure helper (unit/e2e-testable): apply an uploaded media path to settings
+  function applyInputPath(settings, role, path) {
+    const key = INPUT_KEY_BY_ROLE[role];
+    if (!key || !path) return settings;
+    const next = Object.assign({}, settings);
+    if (path) next[key] = String(path);
+    return next;
+  }
+
+  function renderInputSlots(detail) {
+    const host = $("generate-input-slots");
+    const roles = modelInputs(detail).filter((role) => INPUT_KEY_BY_ROLE[role]);
+    $("generate-inputs").hidden = roles.length === 0;
+    const defaults = detail.defaults || {};
+    host.innerHTML = roles.map((role) => {
+      const key = INPUT_KEY_BY_ROLE[role];
+      const current = defaults[key] ? String(defaults[key]) : "";
+      return '<div class="input-slot" data-role="' + role + '">' +
+        '<span class="input-slot-label">' + S.esc(role) + ' <small>→ ' + S.esc(key) + '</small></span>' +
+        '<button class="button button-quiet input-slot-pick" data-role="' + role + '">' + (current ? "Replace file" : "Pick file") + '</button>' +
+        (current ? '<button class="button button-quiet input-slot-clear" data-role="' + role + '" title="Remove">✕</button>' : "") +
+        '<span class="input-slot-value" data-role="' + role + '">' + (current ? S.esc(current.split(/[\\/]/).pop()) : "not set") + '</span>' +
+        '<input type="file" class="input-slot-file" data-role="' + role + '" accept="' + ACCEPT_BY_ROLE[role] + '" hidden></div>';
+    }).join("");
+    host.querySelectorAll(".input-slot-pick").forEach((button) => button.addEventListener("click", () => {
+      const role = button.dataset.role;
+      host.querySelector('.input-slot-file[data-role="' + role + '"]').click();
+    }));
+    host.querySelectorAll(".input-slot-clear").forEach((button) => button.addEventListener("click", () => {
+      const role = button.dataset.role;
+      const key = INPUT_KEY_BY_ROLE[role];
+      let settings;
+      try { settings = JSON.parse($("generate-settings-json").value || "{}"); } catch (_) { settings = {}; }
+      delete settings[key];
+      $("generate-settings-json").value = JSON.stringify(settings, null, 2);
+      const slot = host.querySelector('.input-slot-value[data-role="' + role + '"]');
+      if (slot) slot.textContent = "not set";
+      const pick = host.querySelector('.input-slot-pick[data-role="' + role + '"]');
+      if (pick) pick.textContent = "Pick file";
+      button.remove();
+      $("generate-state").textContent = "Unsaved edits";
+    }));
+    host.querySelectorAll(".input-slot-file").forEach((input) => input.addEventListener("change", async () => {
+      const role = input.dataset.role;
+      const file = input.files && input.files[0];
+      if (!file) return;
+      $("generate-state").textContent = "Uploading " + file.name + "…";
+      const form = new FormData();
+      form.append("file", file);
+      try {
+        const response = await fetch("api/media/upload", { method: "POST", body: form, credentials: "same-origin" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.detail || "Upload failed (" + response.status + ")");
+        const path = body.item && body.item.path;
+        if (!path) throw new Error("Upload did not return a file path");
+        let settings;
+        try { settings = JSON.parse($("generate-settings-json").value || "{}"); }
+        catch (error) { throw new Error("Settings JSON is invalid — fix it before attaching media"); }
+        $("generate-settings-json").value = JSON.stringify(applyInputPath(settings, role, path), null, 2);
+        const value = host.querySelector('.input-slot-value[data-role="' + role + '"]');
+        if (value) value.textContent = file.name;
+        const pick = host.querySelector('.input-slot-pick[data-role="' + role + '"]');
+        if (pick) pick.textContent = "Replace file";
+        $("generate-state").textContent = "Input attached · edits are local until submitted";
+      } catch (error) {
+        $("generate-state").textContent = "Upload failed";
+        S.toast(error.message, true);
+      }
+    }));
+  }
+
   function label(model) {
     const meta = model.metadata || model;
     return String(model.name || meta.name || model.model_type || "");
@@ -73,6 +157,7 @@
       const settings = Object.assign({}, detail.defaults || { model_type: modelType });
       $("generate-settings-json").value = JSON.stringify(settings, null, 2);
       renderPresets(detail);
+      renderInputSlots(detail);
       $("generate-state").textContent = "Native WanGP defaults loaded";
       $("generate-submit").disabled = false;
     } catch (error) {
@@ -158,6 +243,11 @@
     });
   }
 
-  window.WanGPStudioGenerate = { activate };
+  window.WanGPStudioGenerate = {
+    activate,
+    // Models page deep link: open Generate with a model already selected
+    preset: (modelType) => { activate(); selectModel(modelType); },
+    applyInputPath
+  };
   bind();
 })();

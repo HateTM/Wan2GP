@@ -14,6 +14,7 @@
   <script src="assets/dashboard.js" defer></script>
   <script src="assets/settings.js" defer></script>
   <script src="assets/generate.js" defer></script>
+  <script src="assets/models.js" defer></script>
 </head>
 <body>
 <div class="app-shell">
@@ -75,7 +76,7 @@
         </section>
 
         <section class="panel canvas-panel">
-          <div class="canvas-toolbar"><div><span class="panel-kicker">WORKFLOW</span><select id="workflow-select" class="preset-select workflow-select" aria-label="Workflow"><option value="">Loading…</option></select><select id="workflow-template" class="preset-select workflow-template" aria-label="Load a template"><option value="">Templates…</option></select><span class="draft-tag" id="workflow-state">CANVAS</span></div><div class="canvas-tools"><button class="small-tool" id="workflow-new" title="New workflow">＋</button><button class="small-tool" id="workflow-save" title="Save workflow">⌸</button><button class="small-tool" id="workflow-run" title="Run workflow">▶</button><button class="small-tool" id="workflow-cancel" title="Cancel run" disabled>■</button></div></div>
+          <div class="canvas-toolbar"><div><span class="panel-kicker">WORKFLOW</span><select id="workflow-select" class="preset-select workflow-select" aria-label="Workflow"><option value="">Loading…</option></select><select id="workflow-template" class="preset-select workflow-template" aria-label="Load a template"><option value="">Templates…</option></select><span class="draft-tag" id="workflow-state">CANVAS</span></div><div class="canvas-tools"><button class="small-tool pane-toggle" id="library-toggle" title="Toggle the model library" aria-pressed="true">◧</button><button class="small-tool pane-toggle" id="inspector-toggle" title="Toggle the inspector drawer" aria-pressed="false">☷</button><button class="small-tool" id="workflow-new" title="New workflow">＋</button><button class="small-tool" id="workflow-save" title="Save workflow">⌸</button><button class="small-tool" id="workflow-run" title="Run workflow">▶</button><button class="small-tool" id="workflow-cancel" title="Cancel run" disabled>■</button></div></div>
           <div class="canvas workflow-canvas-host" id="workflow-canvas-host">
             <div class="canvas-empty" id="workflow-unavailable" hidden></div>
             <iframe id="workflow-frame" class="workflow-frame" title="Workflow canvas" sandbox="allow-scripts allow-pointer-lock allow-downloads" hidden></iframe>
@@ -258,6 +259,36 @@
       <p class="field-note">Studio does not change WanGP settings; edit them in the native WanGP UI. Attribution and licenses: see the plugin README and <code>web/assets/WANFLOW-LICENSE.txt</code>.</p>
     </section>
 
+    <section class="models-view" id="models-view" hidden>
+      <header class="gallery-head">
+        <div><div class="eyebrow">MANAGE</div><h1>Models</h1><p>Installed catalog with availability, capabilities and LoRA inventory.</p></div>
+        <div class="gallery-head-actions"><button class="button button-quiet" id="models-refresh">↻ Refresh</button></div>
+      </header>
+      <div class="studio-grid models-grid">
+        <section class="panel model-panel">
+          <div class="panel-header"><div><span class="panel-kicker">CATALOG</span><h2>Installed models</h2></div><span class="count-chip" id="models-count">—</span></div>
+          <label class="search-box"><span>⌕</span><input id="models-search" type="search" placeholder="Search installed models…"></label>
+          <div class="filter-row" id="models-filters">
+            <button class="filter-chip selected" data-filter="all">All</button><button class="filter-chip" data-filter="video">Video</button><button class="filter-chip" data-filter="image">Image</button><button class="filter-chip" data-filter="audio">Audio</button><button class="filter-chip" data-filter="3d">3D</button>
+          </div>
+          <div class="model-list" id="models-list"><div class="empty-state">Loading model catalog…</div></div>
+        </section>
+        <section class="panel models-detail-panel">
+          <div class="panel-header"><div><span class="panel-kicker">DETAIL</span><h2 id="models-detail-name">No model selected</h2></div><span class="count-chip" id="models-detail-availability"></span></div>
+          <div class="inspector-content">
+            <div class="inspector-empty" id="models-detail-empty"><div class="inspector-empty-icon">◈</div><strong>Nothing selected</strong><span>Pick a model to see its capabilities, presets and LoRAs.</span></div>
+            <div id="models-detail" hidden>
+              <div class="selected-model"><div class="selected-model-icon">◈</div><div><strong id="models-detail-title">Model</strong><small id="models-detail-type">model_type</small></div></div>
+              <div class="inspector-section"><div class="section-title"><span>CAPABILITIES</span></div><div class="capability-list" id="models-capabilities"></div></div>
+              <div class="inspector-section"><div class="section-title"><span>PRESETS &amp; PROFILES</span><span id="models-preset-count"></span></div><div class="capability-list" id="models-presets"><span class="field-note">—</span></div></div>
+              <div class="inspector-section"><div class="section-title"><span>INSTALLED LORAS</span><span id="models-lora-count"></span></div><div class="capability-list" id="models-loras"></div></div>
+            </div>
+          </div>
+          <div class="inspector-bottom"><span class="save-indicator" id="models-detail-note">Read-only view</span><button class="button button-primary button-full" id="models-open-generate" disabled>Open in Generate</button></div>
+        </section>
+      </div>
+    </section>
+
     <section class="generate-view" id="generate-view" hidden>
       <header class="gallery-head">
         <div><div class="eyebrow">WORKSPACE</div><h1>Generate</h1><p>Quick submission to the native WanGP queue — no graph building required.</p></div>
@@ -277,6 +308,7 @@
           <div class="inspector-content" id="generate-form">
             <div class="inspector-empty" id="generate-empty"><div class="inspector-empty-icon">✦</div><strong>Nothing selected</strong><span>Pick a model to load its native WanGP defaults.</span></div>
             <div id="generate-editor" hidden>
+              <div class="inspector-section" id="generate-inputs" hidden><div class="section-title"><span>INPUT MEDIA</span></div><div id="generate-input-slots"></div></div>
               <label class="field-label" for="generate-prompt">Prompt</label>
               <textarea id="generate-prompt" rows="4" placeholder="Describe the scene…"></textarea>
               <label class="field-label" for="generate-negative">Negative prompt</label>
