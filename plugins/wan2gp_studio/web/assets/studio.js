@@ -250,6 +250,26 @@
     }
   }
 
+  // V4.5: runtime status is derived from API health, never hardcoded. The
+  // sidebar card, footer and topbar pill all reflect the last probe outcome.
+  function applyRuntimeHealth(ok, detail) {
+    const session = detail && detail.session ? detail.session : null;
+    $("runtime-dot").classList.toggle("down", !ok);
+    $("runtime-label").textContent = ok ? "WanGP connected" : "WanGP unreachable";
+    $("runtime-state").textContent = ok ? (session === "ready" ? "Session ready" : "Lazy session") : "No API";
+    $("sidebar-runtime-text").textContent = ok ? "Connected to WanGP" : "WanGP API unreachable";
+    $("runtime-pill-text").textContent = ok ? "WanGP runtime · " + (session === "ready" ? "session ready" : "lazy") : "Runtime unreachable";
+    document.body.classList.toggle("runtime-down", !ok);
+  }
+
+  async function probeHealth() {
+    try {
+      applyRuntimeHealth(true, await api("api/health"));
+    } catch (_) {
+      applyRuntimeHealth(false, null);
+    }
+  }
+
   async function loadModels() {
     $("api-status").textContent = "Loading model catalog…";
     $("runtime-state").textContent = "Loading…";
@@ -261,14 +281,15 @@
       const partial = state.models.filter((model) => availabilityStatus(model) === "partial").length;
       $("api-status").textContent = state.models.length + " models · " + available + " available" +
         (partial ? " · " + partial + " partial" : "") + " · WanGP API connected";
-      $("runtime-state").textContent = "API ready";
       $("canvas-model-count").textContent = state.models.length + " models available";
     } catch (error) {
       $("api-status").textContent = "WanGP API unavailable";
-      $("runtime-state").textContent = "Not ready";
       toast(error.message, true);
       $("model-list").innerHTML = '<div class="empty-state">' + esc(error.message) + '</div>';
     }
+    // health status is independent of the catalog: a catalog error does not
+    // mean the runtime is down (and vice versa)
+    await probeHealth();
   }
 
   function settingsFromEditor() {
@@ -330,31 +351,47 @@
     }
   }
 
+  function jobCard(job) {
+    const status = String(job.status || "queued");
+    const cls = status === "completed" || status === "failed" ? " " + status : "";
+    const cancel = status === "completed" || status === "failed" || status === "cancelled" ? "" : '<button class="cancel-job" data-cancel="' + esc(job.id) + '">Cancel</button>';
+    // Generation History: a finished job can be repeated with its original settings
+    const repeat = status === "completed" || status === "failed" ? '<button class="cancel-job" data-repeat="' + esc(job.id) + '">Repeat</button>' : "";
+    const files = (job.generated_files || []).slice(0, 3);
+    const filesHtml = files.length
+      ? '<div class="queue-files"><button class="queue-file" data-open-gallery="' + esc(job.id) + '">View ' + files.length +
+        ' result(s) in the Media Center</button></div>' : "";
+    const date = job.created_at ? new Date(job.created_at * 1000).toLocaleString() : "";
+    return '<article class="queue-card"><div class="queue-card-top"><span class="queue-card-title">' + esc(job.model_type) +
+      (date ? ' <small class="queue-date">' + esc(date) + "</small>" : "") +
+      '</span><span class="queue-state' + cls + '">' + esc(status) + '</span></div><div class="queue-card-message">' +
+      esc(job.message || job.prompt || "") + '</div><div class="queue-progress"><span style="width:' +
+      Math.max(0, Math.min(100, Number(job.progress) || 0)) + '%"></span></div>' + filesHtml + repeat + cancel + '</article>';
+  }
+
+  function bindJobActions(host) {
+    host.querySelectorAll("[data-cancel]").forEach((button) => button.addEventListener("click", () => cancelJob(button.dataset.cancel)));
+    host.querySelectorAll("[data-repeat]").forEach((button) => button.addEventListener("click", () => repeatJob(button.dataset.repeat)));
+    host.querySelectorAll("[data-open-gallery]").forEach((button) => button.addEventListener("click", () => setView("gallery")));
+  }
+
   function renderJobs() {
     const records = Array.from(state.jobs.values()).sort((a, b) => b.created_at - a.created_at);
     $("queue-count").textContent = String(records.length);
+    const active = records.filter((job) => !["completed", "failed", "cancelled"].includes(String(job.status || "queued"))).length;
+    const badge = $("queue-nav-count");
+    badge.textContent = String(active);
+    badge.hidden = active === 0;
     if (!records.length) {
       $("queue-list").innerHTML = '<div class="queue-empty">No Studio jobs yet. Run a model to see execution progress here.</div>';
+      $("queue-view-list").innerHTML = '<div class="queue-empty">No Studio jobs yet. Run a model or workflow to see execution progress here.</div>';
       return;
     }
-    $("queue-list").innerHTML = records.slice(0, 20).map((job) => {
-      const status = String(job.status || "queued");
-      const cls = status === "completed" || status === "failed" ? " " + status : "";
-      const cancel = status === "completed" || status === "failed" || status === "cancelled" ? "" : '<button class="cancel-job" data-cancel="' + esc(job.id) + '">Cancel</button>';
-      // Generation History: a finished job can be repeated with its original settings
-      const repeat = status === "completed" || status === "failed" ? '<button class="cancel-job" data-repeat="' + esc(job.id) + '">Repeat</button>' : "";
-      const files = (job.generated_files || []).slice(0, 3);
-      const filesHtml = files.length
-        ? '<div class="queue-files"><button class="queue-file" data-open-gallery="' + esc(job.id) + '">View ' + files.length +
-          ' result(s) in Gallery</button></div>' : "";
-      return '<article class="queue-card"><div class="queue-card-top"><span class="queue-card-title">' + esc(job.model_type) +
-        '</span><span class="queue-state' + cls + '">' + esc(status) + '</span></div><div class="queue-card-message">' +
-        esc(job.message || job.prompt || "") + '</div><div class="queue-progress"><span style="width:' +
-        Math.max(0, Math.min(100, Number(job.progress) || 0)) + '%"></span></div>' + filesHtml + repeat + cancel + '</article>';
-    }).join("");
-    $("queue-list").querySelectorAll("[data-cancel]").forEach((button) => button.addEventListener("click", () => cancelJob(button.dataset.cancel)));
-    $("queue-list").querySelectorAll("[data-repeat]").forEach((button) => button.addEventListener("click", () => repeatJob(button.dataset.repeat)));
-    $("queue-list").querySelectorAll("[data-open-gallery]").forEach((button) => button.addEventListener("click", () => setView("gallery")));
+    $("queue-list").innerHTML = records.slice(0, 20).map(jobCard).join("");
+    bindJobActions($("queue-list"));
+    // the Queue page shows the full history, not just the drawer window
+    $("queue-view-list").innerHTML = records.map(jobCard).join("");
+    bindJobActions($("queue-view-list"));
   }
 
   async function refreshJobs() {
@@ -419,11 +456,22 @@
   const VIEW_CONFIG = {
     workflow: { nav: "nav-workflow", hash: "#workflow", label: "Workflow", section: null },
     dashboard: { nav: "nav-dashboard", hash: "#dashboard", label: "Dashboard", section: "dashboard-view", mode: "dashboard-mode", activate: "WanGPStudioDashboard" },
-    gallery: { nav: "nav-gallery", hash: "#gallery", label: "Gallery", section: "gallery-view", mode: "gallery-mode", activate: "WanGPStudioGallery" },
-    resources: { nav: "nav-resources", hash: "#resources", label: "Resources", section: "resource-view", mode: "resources-mode", activate: "WanGPStudioTelemetry" },
+    generate: { nav: "nav-generate", hash: "#generate", label: "Generate", section: "generate-view", mode: "generate-mode", activate: "WanGPStudioGenerate" },
+    gallery: { nav: "nav-gallery", hash: "#gallery", label: "Media Center", section: "gallery-view", mode: "gallery-mode", activate: "WanGPStudioGallery" },
+    imageeditor: { nav: "nav-imageeditor", hash: "#imageeditor", label: "Image Editor", section: "imageeditor-view", mode: "imageeditor-mode", activate: "WanGPStudioImageEditor" },
+    queue: { nav: "nav-queue", hash: "#queue", label: "Queue", section: "queue-view", mode: "queue-mode" },
+    resources: { nav: "nav-resources", hash: "#resources", label: "Resource Center", section: "resource-view", mode: "resources-mode", activate: "WanGPStudioTelemetry" },
     plugins: { nav: "nav-plugins", hash: "#plugins", label: "Plugins", section: "plugins-view", mode: "plugins-mode", activate: "WanGPStudioPlugins" },
     settings: { nav: "nav-settings", hash: "#settings", label: "Settings", section: "settings-view", mode: "settings-mode", activate: "WanGPStudioSettings" }
   };
+
+  // pre-V4.5 hashes keep working: the old views were renamed, not removed
+  const HASH_ALIASES = { "#library": "gallery", "#media": "gallery", "#history": "queue" };
+
+  function viewFromHash(hash) {
+    const canonical = Object.keys(VIEW_CONFIG).find((name) => VIEW_CONFIG[name].hash === hash);
+    return canonical || HASH_ALIASES[hash] || null;
+  }
 
   function setView(view) {
     const config = VIEW_CONFIG[view] || VIEW_CONFIG.workflow;
@@ -431,7 +479,10 @@
     document.body.classList.toggle("workspace-hidden", Boolean(config.section));
     Object.keys(VIEW_CONFIG).forEach((name) => {
       const item = VIEW_CONFIG[name];
-      if (item.section) $(item.section).hidden = name !== view;
+      if (item.section) {
+        const section = $(item.section);
+        if (section) section.hidden = name !== view;
+      }
       if (item.mode) document.body.classList.toggle(item.mode, name === view);
       const nav = $(item.nav);
       if (nav) nav.classList.toggle("active", name === view);
@@ -448,7 +499,6 @@
       const button = event.target.closest("[data-filter]");
       if (button) setFilter(button.dataset.filter);
     });
-    document.querySelectorAll(".library-item").forEach((button) => button.addEventListener("click", () => setFilter(button.dataset.filter)));
     $("refresh-models").addEventListener("click", loadModels);
     $("refresh-queue").addEventListener("click", refreshJobs);
     $("load-preset").addEventListener("click", loadPreset);
@@ -507,12 +557,52 @@
     $("nav-plugins").addEventListener("click", () => setView("plugins"));
     $("nav-dashboard").addEventListener("click", () => setView("dashboard"));
     $("nav-settings").addEventListener("click", () => setView("settings"));
-    $("nav-models").addEventListener("click", () => $("model-search").focus());
+    $("nav-generate").addEventListener("click", () => setView("generate"));
+    $("nav-queue").addEventListener("click", () => setView("queue"));
+    $("nav-imageeditor").addEventListener("click", () => setView("imageeditor"));
+    $("nav-models").addEventListener("click", () => setView("workflow"));
+    $("queue-refresh").addEventListener("click", refreshJobs);
+    $("drawer-toggle").addEventListener("click", () => {
+      const drawer = $("execution-drawer");
+      const collapsed = drawer.classList.toggle("collapsed");
+      $("drawer-toggle").setAttribute("aria-expanded", collapsed ? "false" : "true");
+      $("drawer-toggle").textContent = collapsed ? "▾" : "▴";
+    });
+    // V4.5 Image Editor bridge: dependency state from the plugin registry,
+    // never a duplicated editor.
+    async function refreshImageEditor() {
+      try {
+        const environment = await api("api/environment");
+        const suite = (environment.plugins || []).find((plugin) => plugin.id === "ImageSuite-Wan2GP");
+        const state_ = suite ? suite.state : "not_installed";
+        $("imageeditor-plugin-state").textContent = state_;
+        $("imageeditor-open").hidden = state_ !== "enabled";
+        $("imageeditor-goto-plugins").hidden = state_ === "enabled";
+        $("imageeditor-message").textContent = state_ === "enabled"
+          ? "ImageSuite is installed and enabled. Send images from the Media Center lightbox."
+          : state_ === "disabled"
+            ? "ImageSuite is installed but disabled — enable it in the Plugins view."
+            : "ImageSuite is not installed. Install it with the Plugin Manager, or edit images in the native WanGP UI.";
+      } catch (error) {
+        $("imageeditor-plugin-state").textContent = "unreachable";
+        $("imageeditor-message").textContent = "Could not read the plugin registry: " + error.message;
+        $("imageeditor-open").hidden = true;
+        $("imageeditor-goto-plugins").hidden = false;
+      }
+    }
+    $("imageeditor-goto-plugins").addEventListener("click", () => setView("plugins"));
+    window.WanGPStudioImageEditor = { activate: refreshImageEditor };
     document.addEventListener("keydown", (event) => {
       if (event.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) {
         event.preventDefault();
         if (state.view === "gallery") $("gallery-query").focus();
         else $("model-search").focus();
+      }
+      if ((event.ctrlKey || event.metaKey) && (event.key === "s" || event.key === "S")) {
+        if (state.view === "workflow" && window.WanGPStudioCanvas) {
+          event.preventDefault();
+          window.WanGPStudioCanvas.saveGraph();
+        }
       }
     });
   }
@@ -525,15 +615,20 @@
     api, esc, toast, setView,
     onNodeSelected,
     selectModel: (modelType) => selectModel(modelType),
-    getView: () => state.view
+    getView: () => state.view,
+    getModels: () => state.models.slice(),
+    modelCategory: category,
+    modelAvailability: availabilityStatus
   };
 
   async function init() {
     bindEvents();
-    if (location.hash === "#gallery") setView("gallery");
+    const view = viewFromHash(location.hash);
+    if (view) setView(view);
     await loadModels();
     await refreshJobs();
     window.setInterval(refreshJobs, 5000);
+    window.setInterval(probeHealth, 30000);
   }
   init();
 })();

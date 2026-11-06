@@ -13,6 +13,7 @@
   <script src="assets/plugins.js" defer></script>
   <script src="assets/dashboard.js" defer></script>
   <script src="assets/settings.js" defer></script>
+  <script src="assets/generate.js" defer></script>
 </head>
 <body>
 <div class="app-shell">
@@ -21,38 +22,39 @@
     <div class="sidebar-label">WORKSPACE</div>
     <nav class="primary-nav">
       <button class="nav-item" id="nav-dashboard"><span class="nav-icon">◫</span> Dashboard</button>
+      <button class="nav-item" id="nav-generate"><span class="nav-icon">✦</span> Generate</button>
       <button class="nav-item active" id="nav-workflow"><span class="nav-icon">⌘</span> Workflow</button>
-      <button class="nav-item" id="nav-models"><span class="nav-icon">◈</span> Models</button>
-      <button class="nav-item" id="nav-gallery"><span class="nav-icon">▧</span> Gallery <span class="nav-count" id="gallery-nav-count" hidden></span></button>
-      <button class="nav-item" disabled><span class="nav-icon">◷</span> History <span class="nav-soon">NEXT</span></button>
     </nav>
-    <div class="sidebar-label section-gap">MODEL TYPES</div>
-    <div class="library-shortcuts">
-      <button class="library-item" data-filter="video"><span class="type-dot video"></span> Video models</button>
-      <button class="library-item" data-filter="image"><span class="type-dot image"></span> Image models</button>
-      <button class="library-item" data-filter="audio"><span class="type-dot audio"></span> Audio models</button>
-      <button class="library-item" data-filter="3d"><span class="type-dot three"></span> 3D models</button>
-    </div>
+    <div class="sidebar-label section-gap">LIBRARY</div>
+    <nav class="primary-nav">
+      <button class="nav-item" id="nav-gallery"><span class="nav-icon">▧</span> Media Center <span class="nav-count" id="gallery-nav-count" hidden></span></button>
+      <button class="nav-item" id="nav-imageeditor"><span class="nav-icon">✎</span> Image Editor</button>
+    </nav>
+    <div class="sidebar-label section-gap">MANAGE</div>
+    <nav class="primary-nav">
+      <button class="nav-item" id="nav-models"><span class="nav-icon">◈</span> Models</button>
+      <button class="nav-item" id="nav-queue"><span class="nav-icon">◷</span> Queue <span class="nav-count" id="queue-nav-count" hidden></span></button>
+    </nav>
     <div class="sidebar-label section-gap">SYSTEM</div>
     <nav class="primary-nav">
-      <button class="nav-item" id="nav-resources"><span class="nav-icon">▤</span> Resources</button>
+      <button class="nav-item" id="nav-resources"><span class="nav-icon">▤</span> Resource Center</button>
       <button class="nav-item" id="nav-plugins"><span class="nav-icon">◨</span> Plugins <span class="nav-count" id="plugins-nav-count" hidden></span></button>
       <button class="nav-item" id="nav-settings"><span class="nav-icon">⚙</span> Settings</button>
     </nav>
     <div class="sidebar-spacer"></div>
     <section class="memory-card">
-      <div class="memory-heading"><span>RUNTIME</span><span class="live-dot"></span></div>
-      <div class="memory-runtime">WanGP connected</div>
+      <div class="memory-heading"><span>RUNTIME</span><span class="live-dot" id="runtime-dot"></span></div>
+      <div class="memory-runtime" id="runtime-label">Checking WanGP…</div>
       <div class="memory-caption">Single runtime · No duplicate model process</div>
       <div class="memory-foot"><span>API SESSION</span><span id="runtime-state">Checking…</span></div>
     </section>
-    <div class="sidebar-footer"><span class="status-dot"></span> Connected to WanGP</div>
+    <div class="sidebar-footer" id="sidebar-runtime"><span class="status-dot"></span> <span id="sidebar-runtime-text">Checking…</span></div>
   </aside>
 
   <main class="main-area">
     <header class="topbar">
       <div class="breadcrumbs"><span>Workspace</span><span class="crumb-sep">/</span><strong id="breadcrumb-current">Workflow</strong></div>
-      <div class="top-actions"><span class="runtime-pill"><i></i> WanGP runtime</span><button class="icon-button" id="refresh-models" title="Refresh model catalog">↻</button><span class="user-button">1.5.1</span></div>
+      <div class="top-actions"><span class="runtime-pill" id="runtime-pill"><i></i> <span id="runtime-pill-text">WanGP runtime</span></span><button class="icon-button" id="refresh-models" title="Refresh model catalog">↻</button><span class="user-button">1.6.0</span></div>
     </header>
 
     <section class="workspace">
@@ -241,7 +243,7 @@
         </article>
       </div>
       <div class="dashboard-actions">
-        <button class="button button-quiet" id="dash-goto-gallery">Open Gallery</button>
+        <button class="button button-quiet" id="dash-goto-gallery">Open Media Center</button>
         <button class="button button-quiet" id="dash-goto-workflow">Open Workflow</button>
         <button class="button button-quiet" id="dash-goto-resources">Open Resources</button>
       </div>
@@ -256,11 +258,82 @@
       <p class="field-note">Studio does not change WanGP settings; edit them in the native WanGP UI. Attribution and licenses: see the plugin README and <code>web/assets/WANFLOW-LICENSE.txt</code>.</p>
     </section>
 
-    <section class="queue-panel">
-      <div class="queue-heading"><div class="queue-title"><span class="panel-kicker">EXECUTION</span><h2>Studio tasks <span id="queue-count">0</span></h2></div><div class="queue-actions"><span class="queue-runtime"><i></i> Submitted to native queue</span><button class="small-tool" id="refresh-queue">↻</button></div></div>
+    <section class="generate-view" id="generate-view" hidden>
+      <header class="gallery-head">
+        <div><div class="eyebrow">WORKSPACE</div><h1>Generate</h1><p>Quick submission to the native WanGP queue — no graph building required.</p></div>
+        <div class="gallery-head-actions"><button class="button button-primary" id="generate-run" disabled>▶ Run generation</button></div>
+      </header>
+      <div class="studio-grid generate-grid">
+        <section class="panel model-panel">
+          <div class="panel-header"><div><span class="panel-kicker">MODEL</span><h2>Pick a model</h2></div><span class="count-chip" id="generate-model-count">—</span></div>
+          <label class="search-box"><span>⌕</span><input id="generate-model-search" type="search" placeholder="Search installed models…"></label>
+          <div class="filter-row" id="generate-model-filters">
+            <button class="filter-chip selected" data-filter="all">All</button><button class="filter-chip" data-filter="video">Video</button><button class="filter-chip" data-filter="image">Image</button><button class="filter-chip" data-filter="audio">Audio</button><button class="filter-chip" data-filter="3d">3D</button>
+          </div>
+          <div class="model-list" id="generate-model-list"><div class="empty-state">Loading model catalog…</div></div>
+        </section>
+        <section class="panel generate-form-panel">
+          <div class="panel-header"><div><span class="panel-kicker">SETTINGS</span><h2 id="generate-model-title">No model selected</h2></div><span class="inspector-icon" id="generate-model-state"></span></div>
+          <div class="inspector-content" id="generate-form">
+            <div class="inspector-empty" id="generate-empty"><div class="inspector-empty-icon">✦</div><strong>Nothing selected</strong><span>Pick a model to load its native WanGP defaults.</span></div>
+            <div id="generate-editor" hidden>
+              <label class="field-label" for="generate-prompt">Prompt</label>
+              <textarea id="generate-prompt" rows="4" placeholder="Describe the scene…"></textarea>
+              <label class="field-label" for="generate-negative">Negative prompt</label>
+              <textarea id="generate-negative" rows="2" placeholder="What to avoid (kept only if the model supports it)"></textarea>
+              <div class="inspector-section">
+                <div class="section-title"><span>PRESETS &amp; PROFILES</span><span id="generate-preset-count"></span></div>
+                <div class="preset-row"><select id="generate-preset" class="preset-select" disabled><option>No presets available</option></select><button class="button button-quiet preset-load" id="generate-load-preset" disabled>Load</button></div>
+              </div>
+              <div class="settings-toolbar"><span>Full WanGP settings JSON</span><button id="generate-format-json">Format</button></div>
+              <textarea id="generate-settings-json" class="json-editor" spellcheck="false" rows="12"></textarea>
+              <p class="field-note">Advanced parameters are preserved. Edit the JSON for model-specific options; unknown fields are passed through untouched.</p>
+            </div>
+          </div>
+          <div class="inspector-bottom"><span class="save-indicator" id="generate-state">No model selected</span><button class="button button-primary button-full" id="generate-submit" disabled>Submit to native queue</button></div>
+        </section>
+      </div>
+    </section>
+
+    <section class="queue-view" id="queue-view" hidden>
+      <header class="gallery-head">
+        <div><div class="eyebrow">MANAGE</div><h1>Queue</h1><p>Studio tasks running through the single native WanGP queue.</p></div>
+        <div class="gallery-head-actions">
+          <span class="queue-runtime"><i></i> Submitted to native queue</span>
+          <button class="button button-quiet" id="queue-refresh">↻ Refresh</button>
+        </div>
+      </header>
+      <div class="queue-list queue-full" id="queue-view-list"><div class="queue-empty">No Studio jobs yet. Run a model or workflow to see execution progress here.</div></div>
+      <p class="field-note" id="queue-native-note"></p>
+    </section>
+
+    <section class="resource-view" id="imageeditor-view" hidden>
+      <header class="gallery-head">
+        <div><div class="eyebrow">LIBRARY</div><h1>Image Editor</h1><p>Bridge to the installed ImageSuite plugin — Studio never duplicates the editor itself.</p></div>
+      </header>
+      <div class="resource-grid" id="imageeditor-state">
+        <article class="resource-card">
+          <div class="resource-head"><span>DEPENDENCY</span><span id="imageeditor-plugin-state">checking…</span></div>
+          <div class="metric current-line" id="imageeditor-message">Checking the plugin registry…</div>
+          <div class="dashboard-actions">
+            <a class="button button-primary" id="imageeditor-open" href="/" target="_blank" rel="noopener" hidden>Open ImageSuite ↗</a>
+            <button class="button button-quiet" id="imageeditor-goto-plugins" hidden>Open Plugins</button>
+          </div>
+        </article>
+        <article class="resource-card">
+          <div class="resource-head"><span>HOW TO EDIT</span></div>
+          <div class="metric current-line">1. Pick an image in the Media Center and open the lightbox.</div>
+          <div class="metric current-line">2. Use Send to plugin - the bridge hands the file to ImageSuite.</div>
+          <div class="metric current-line">3. Edited results land back in the WanGP outputs and appear here.</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="queue-panel" id="execution-drawer">
+      <div class="queue-heading"><div class="queue-title"><span class="panel-kicker">EXECUTION</span><h2>Studio tasks <span id="queue-count">0</span></h2></div><div class="queue-actions"><span class="queue-runtime"><i></i> Submitted to native queue</span><button class="small-tool" id="drawer-toggle" title="Collapse or expand the execution drawer" aria-expanded="true">▴</button><button class="small-tool" id="refresh-queue">↻</button></div></div>
       <div class="queue-list" id="queue-list"><div class="queue-empty">No Studio jobs yet. Run a model to see execution progress here.</div></div>
     </section>
-    <footer class="main-footer"><span>WanGP Studio <b>1.5.1</b> · Powered by WanGP</span><span id="api-status">Connecting to local runtime…</span></footer>
+    <footer class="main-footer"><span>WanGP Studio <b>1.6.0</b> · Powered by WanGP</span><span id="api-status">Connecting to local runtime…</span></footer>
   </main>
 </div>
 
