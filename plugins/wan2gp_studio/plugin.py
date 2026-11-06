@@ -1159,10 +1159,54 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 raise HTTPException(status_code=404, detail="Workflow run not found.")
             return {"run_id": run_id, "status": "cancellation_requested"}
 
+        def _jobs_history_path() -> Path:
+            config = self.server_config if isinstance(self.server_config, dict) else {}
+            workspaces = config.get("workspaces_dir") or str(Path(__file__).resolve().parents[2] / "workspaces")
+            return Path(workspaces) / "studio_jobs.json"
+
+        def _persist_finished_jobs() -> None:
+            """V4.4: terminal jobs survive host restarts (bounded to 50)."""
+            try:
+                with jobs_lock:
+                    terminal = {"completed", "failed", "cancelled"}
+                    records = [record.snapshot() for record in jobs.values()
+                               if record.snapshot()["status"] in terminal]
+                try:
+                    disk = json.loads(_jobs_history_path().read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    disk = []
+                by_id = {item.get("id"): item for item in disk if isinstance(item, dict)}
+                for item in records:
+                    by_id[item["id"]] = item
+                merged = sorted(by_id.values(), key=lambda item: item.get("created_at", 0), reverse=True)[:50]
+                _jobs_history_path().parent.mkdir(parents=True, exist_ok=True)
+                _jobs_history_path().write_text(json.dumps(merged, ensure_ascii=False), encoding="utf-8")
+            except Exception as exc:
+                print(f"[Studio] job history persist failed: {exc}")
+
+        class _StoredJob:
+            """Read-only view of a job restored from the on-disk history."""
+
+            def __init__(self, snapshot: dict[str, Any]) -> None:
+                self._snapshot = snapshot
+                self.created_at = snapshot.get("created_at", 0)
+                self.id = snapshot.get("id", "")
+
+            def snapshot(self) -> dict[str, Any]:
+                return self._snapshot
+
         @app.get("/api/jobs")
         def list_jobs():
             with jobs_lock:
                 records = list(jobs.values())
+                memory_ids = {record.id for record in records}
+            try:
+                disk = json.loads(_jobs_history_path().read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                disk = []
+            for item in disk if isinstance(disk, list) else []:
+                if isinstance(item, dict) and item.get("id") not in memory_ids:
+                    records.append(_StoredJob(item))
             records.sort(key=lambda item: item.created_at, reverse=True)
             return [record.snapshot() for record in records[:50]]
 
@@ -1243,6 +1287,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                     with record._lock:
                         record.session_job = None
                     record.emit("closed", {"job_id": job_id})
+                    _persist_finished_jobs()
 
             threading.Thread(
                 target=collect_result,
@@ -1263,12 +1308,24 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         async def repeat_job(job_id: str):
             with jobs_lock:
                 record = jobs.get(str(job_id))
+            stored_settings = None
             if record is None:
-                raise HTTPException(status_code=404, detail="Unknown job.")
-            stored = getattr(record, "settings", None)
-            if not isinstance(stored, dict):
+                # the job may live only in the on-disk history (host restart)
+                try:
+                    disk = json.loads(_jobs_history_path().read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    disk = []
+                for item in disk if isinstance(disk, list) else []:
+                    if isinstance(item, dict) and item.get("id") == str(job_id):
+                        stored_settings = item.get("settings")
+                        break
+                if not isinstance(stored_settings, dict):
+                    raise HTTPException(status_code=404, detail="Unknown job.")
+            else:
+                stored_settings = getattr(record, "settings", None)
+            if not isinstance(stored_settings, dict):
                 raise HTTPException(status_code=409, detail="This job has no stored settings to repeat.")
-            return await _start_job(copy.deepcopy(stored))
+            return await _start_job(copy.deepcopy(stored_settings))
         @app.post("/api/jobs/{job_id}/cancel")
         def cancel_job(job_id: str):
             with jobs_lock:

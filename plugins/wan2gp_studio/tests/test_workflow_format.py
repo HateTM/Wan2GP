@@ -7,6 +7,8 @@ import sys
 import uuid
 from pathlib import Path
 
+tmp_root = ""  # set per-test via the module global
+
 import pytest
 
 
@@ -497,7 +499,8 @@ def test_workflow_run_links_outputs_to_the_run(tmp_path, monkeypatch):
     assert sidecar.is_file()
     data = json.loads(sidecar.read_text(encoding="utf-8"))
     assert data["workflow"]["run_id"] == run_id
-    assert data["workflow"]["graph"] == "Link test"
+    assert data["workflow"]["graph_name"] == "Link test"
+    assert data["workflow"]["nodes"], "the normalized graph must be stored"
 
     index = MediaIndex(lambda: [str(produced.parent)], min_refresh_interval=0.0)
     index.refresh(force=True)
@@ -505,7 +508,8 @@ def test_workflow_run_links_outputs_to_the_run(tmp_path, monkeypatch):
     entry = index.get(media_id_for(str(produced)))
     detail = index.detail(entry)
     assert detail["workflow"]["run_id"] == run_id
-    assert detail["workflow"]["graph"] == "Link test"
+    assert detail["workflow"]["graph_name"] == "Link test"
+    assert detail["workflow"]["nodes"], "the full graph must be restorable"
 
 
 def test_output_sidecar_never_touches_files_outside_output_root(tmp_path, monkeypatch):
@@ -546,3 +550,40 @@ def test_builtin_templates_import_cleanly(tmp_path, monkeypatch):
         )
         assert imported.status_code == 200, (template_id, imported.text)
         assert imported.json()["unknown_nodes"] == []
+
+
+class _StubRunner:
+    """Replaces the wanflow graph_runner: records which release paths fire."""
+
+    def __init__(self, fail: bool = False):
+        self.fail = fail
+        self.calls: list[str] = []
+
+    def run_graph(self, *args, **kwargs):
+        if self.fail:
+            raise RuntimeError("boom mid-run")
+        return [], {}
+
+    def release_workflow_models(self, plugin, graph):
+        self.calls.append("honoring")
+
+    def release_loaded_model(self, plugin):
+        self.calls.append("always")
+
+
+def _run_worker_once(plugin, runner, graph):
+    compat = WorkflowCompat(
+        plugin, plugins_root=str(PLUGINS_ROOT), output_root=tmp_marker
+    ) if False else None
+    # build a real compat via the plugin facade so _emit/_bind_session work
+    plugin.get_session = lambda: {"_ui_local": None}
+    real = plugin._build_workflow_compat() if hasattr(plugin, "_build_workflow_compat") else None
+    assert real is not None, "plugin must expose its WorkflowCompat instance"
+    record = {
+        "id": "test-run", "status": "running", "progress": 0, "message": "",
+        "nodes": {}, "outputs": [], "variables": {}, "errors": [],
+        "cancel_requested": False, "created_at": time.time(), "updated_at": time.time(),
+        "events": __import__("collections").deque(maxlen=10), "next_event": 1,
+    }
+    real._run_worker(record, graph, [], runner)
+    return record, runner

@@ -596,7 +596,7 @@ class MediaIndex:
                 if isinstance(workflow, dict) and workflow:
                     payload["workflow"] = {
                         key: value for key, value in workflow.items()
-                        if isinstance(value, (str, int, float))
+                        if isinstance(value, (str, int, float, list, dict))
                     }
             except (OSError, ValueError):
                 pass

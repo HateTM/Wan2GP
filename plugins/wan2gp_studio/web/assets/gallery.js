@@ -558,7 +558,7 @@
     const facts = [
       factRow("Type", KIND_LABEL[item.kind] || item.kind),
       factRow("Workflow", workflow.run_id
-        ? (workflow.graph || "Workflow") + " · " + String(workflow.run_id).slice(0, 8)
+        ? (workflow.graph_name || workflow.graph || "Workflow") + " · " + String(workflow.run_id).slice(0, 8)
         : ""),
       factRow("Size", fmtSize(item.size)),
       factRow("Dimensions", item.width ? item.width + "×" + item.height : (item.resolution || "")),
@@ -576,6 +576,7 @@
     $("lightbox-path").textContent = item.path || "";
     $("lightbox-reuse").disabled = !((metadata && metadata.model_type) || item.model_type);
     $("lightbox-usewf").hidden = !["image", "video", "audio"].includes(item.kind);
+    $("lightbox-openwf").hidden = !(detail.workflow && Array.isArray(detail.workflow.nodes) && detail.workflow.nodes.length);
     const download = $("lightbox-download");
     download.setAttribute("href", fileUrl);
     download.setAttribute("download", item.name || "media");
@@ -870,6 +871,21 @@
       if (state.detail) deleteMedia([state.detail.item.id], state.detail.item.name);
     });
     $("lightbox-usewf").addEventListener("click", useInWorkflow);
+    $("lightbox-openwf").addEventListener("click", () => {
+      const workflow = (state.detail || {}).workflow || {};
+      if (!Array.isArray(workflow.nodes) || !workflow.nodes.length) return;
+      closeLightbox();
+      S.setView("workflow");
+      const loaded = window.WanGPStudioCanvas && window.WanGPStudioCanvas.loadGraphIntoCanvas
+        ? window.WanGPStudioCanvas.loadGraphIntoCanvas({
+            name: workflow.graph || "From gallery",
+            nodes: workflow.nodes,
+            edges: workflow.edges || [],
+            settings: workflow.settings || {}
+          })
+        : false;
+      toast(loaded ? "Workflow from the run loaded onto the canvas." : "The canvas is unavailable.", !loaded);
+    });
     updateSelectionBar();
   }
 

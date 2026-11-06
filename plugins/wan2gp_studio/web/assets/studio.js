@@ -152,6 +152,59 @@
       : '<span class="field-note">No additional capability metadata was returned.</span>';
   }
 
+  // V4.1: canvas node selection drives the right panel. The panel keeps its
+  // native model-settings editor; the node contributes model_type + prompt.
+  function onNodeSelected(node) {
+    const heading = document.getElementById("inspector-empty");
+    if (!node) return;
+    if (heading) {
+      heading.hidden = false;
+      heading.innerHTML = '<div class="inspector-empty-icon">☑</div><strong>Node: ' + S.esc(node.title || node.type) +
+        '</strong><span>' + S.esc(node.type) + (node.params && node.params.path ? " · " + S.esc(node.params.path) : "") + "</span>";
+    }
+    const modelType = node.params && node.params.model_type;
+    if (modelType) {
+      selectModel(modelType).then(() => {
+        const promptBox = document.getElementById("prompt-input");
+        if (promptBox && node.params && node.params.prompt) promptBox.value = node.params.prompt;
+        state.nodeSelected = node;
+        const apply = document.getElementById("apply-to-node");
+        if (apply) apply.hidden = false;
+      }).catch(() => {});
+    } else {
+      // input/ffmpeg nodes: no model settings, but expose the path
+      const editor = document.getElementById("inspector-editor");
+      const json = document.getElementById("settings-json");
+      if (editor && json) {
+        editor.hidden = false;
+        json.value = JSON.stringify(node.params || {}, null, 2);
+      }
+      state.nodeSelected = node;
+      const apply = document.getElementById("apply-to-node");
+      if (apply) apply.hidden = false;
+    }
+  }
+
+  async function applyToNode() {
+    const node = state.nodeSelected;
+    if (!node) return;
+    let settings = null;
+    try {
+      settings = JSON.parse(document.getElementById("settings-json").value || "{}");
+    } catch (error) {
+      toast("Settings JSON is invalid.", true);
+      return;
+    }
+    const prompt = document.getElementById("prompt-input").value;
+    const modelType = settings.model_type || (node.params && node.params.model_type) || null;
+    const applied = window.WanGPStudioCanvas.applyToSelectedNode({
+      settings: settings,
+      prompt: prompt,
+      model_type: modelType
+    });
+    toast(applied ? "Applied to the selected node." : "The canvas is unavailable.", !applied);
+  }
+
   async function selectModel(modelType) {
     state.selectedModel = modelType;
     renderModels();
@@ -403,6 +456,7 @@
       }
     });
     $("run-from-inspector").addEventListener("click", runGeneration);
+    $("apply-to-node").addEventListener("click", applyToNode);
     $("prompt-input").addEventListener("input", () => {
       $("settings-state").textContent = "Unsaved edits";
       try {
@@ -465,6 +519,7 @@
 
   window.WanGPStudio = {
     api, esc, toast, setView,
+    onNodeSelected,
     selectModel: (modelType) => selectModel(modelType),
     getView: () => state.view
   };

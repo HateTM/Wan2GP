@@ -445,6 +445,13 @@
         .finally(() => setBusy(false));
     });
     $("workflow-run").addEventListener("click", runCurrent);
+    window.addEventListener("message", (event) => {
+      const data = event && event.data;
+      if (!data || data.type !== "WAN2GP_WORKFLOWS_V2" || data.action !== "node_selected") return;
+      if (window.WanGPStudio && window.WanGPStudio.onNodeSelected) {
+        window.WanGPStudio.onNodeSelected(data.node);
+      }
+    });
     $("workflow-cancel").addEventListener("click", cancelRun);
     window.addEventListener("message", (event) => {
       const data = event && event.data;
@@ -565,6 +572,36 @@
     return true;
   }
 
+  function applyToSelectedNode(payload) {
+    const frameWindow = state.frame && state.frame.contentWindow;
+    if (!frameWindow) return false;
+    frameWindow.postMessage({
+      type: "WAN2GP_WORKFLOWS_V2",
+      action: "apply_node_settings",
+      settings: payload.settings || null,
+      prompt: typeof payload.prompt === "string" ? payload.prompt : null,
+      model_type: payload.model_type || null
+    }, "*");
+    return true;
+  }
+
+  function loadGraphIntoCanvas(graph) {
+    if (!graph || !Array.isArray(graph.nodes)) return false;
+    if (state.frame && state.frame.contentWindow) {
+      state.frame.contentWindow.postMessage({
+        type: "WAN2GP_WORKFLOWS_V2",
+        action: "load_graph",
+        graph: graph
+      }, "*");
+      state.graph = graph;
+      setStatus((graph.name || "Workflow") + " · " + graph.nodes.length + " nodes (from Gallery)");
+      return true;
+    }
+    state.graph = graph;
+    buildFrame(graph).catch(() => {});
+    return true;
+  }
+
   bind();
   window.WanGPStudioCanvas = {
     activate,
@@ -573,6 +610,8 @@
     runCurrent,
     newWorkflow,
     addMediaInput,
+    applyToSelectedNode,
+    loadGraphIntoCanvas,
     getGraph: () => requestCanvasGraph(3000),
     getState: () => ({ slug: state.slug, runId: state.runId, graph: state.graph })
   };
