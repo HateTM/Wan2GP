@@ -106,3 +106,28 @@ def test_version_strings_are_consistent():
     version = info["version"]
     assert f'WanGP Studio <b>{version}</b>' in html  # footer
     assert f'<span class="user-button">{version}</span>' in html  # topbar
+
+
+def test_primary_run_executes_the_live_canvas_graph():
+    """The visible primary action runs the canvas, not a separate model task."""
+    html = _read(HTML)
+    studio = _read(os.path.join(ASSETS, "studio.js"))
+    workflow = _read(os.path.join(ASSETS, "workflow.js"))
+    assert 'id="run-generation">▶ Run workflow' in html
+    assert 'window.WanGPStudioCanvas.runCurrent()' in studio
+    assert 'runCurrent,' in workflow
+    assert 'const graph = await requestCanvasGraph();' in workflow
+
+
+def test_workflow_handlers_are_bound_once():
+    workflow = _read(os.path.join(ASSETS, "workflow.js"))
+    studio = _read(os.path.join(ASSETS, "studio.js"))
+    assert len(re.findall(r"(?m)^  bind\(\);$", workflow)) == 1
+    assert studio.count('querySelectorAll("[data-cancel]")') == 1
+    assert studio.count('querySelectorAll("[data-repeat]")') == 1
+    assert studio.count('querySelectorAll("[data-open-gallery]")') == 1
+
+
+def test_model_catalog_requests_complete_available_page():
+    studio = _read(os.path.join(ASSETS, "studio.js"))
+    assert 'api/models?limit=500&availability=1' in studio

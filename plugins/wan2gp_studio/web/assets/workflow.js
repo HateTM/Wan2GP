@@ -16,6 +16,8 @@
     frame: null,
     assets: null,
     runId: null,
+    runRequestPending: false,
+    submittingRun: false,
     events: null,
     nodeStates: {},
     status: "Workflow canvas"
@@ -234,11 +236,38 @@
     }
   }
 
-  async function startRun(graph) {
-    if (state.runId) {
-      toast("A workflow is already running.", true);
+  async function runCurrent() {
+    if (!state.graph) {
+      toast("Open or create a workflow first.", true);
       return;
     }
+    if (state.runId || state.runRequestPending || state.submittingRun) {
+      toast("A workflow is already starting or running.", true);
+      return;
+    }
+    state.runRequestPending = true;
+    setBusy(true);
+    try {
+      const graph = await requestCanvasGraph();
+      if (!graph) {
+        toast("Could not read the current graph from the canvas. Run aborted.", true);
+        setStatus("Run aborted");
+        return;
+      }
+      state.graph = graph;
+      await startRun(graph);
+    } finally {
+      state.runRequestPending = false;
+      if (!state.runId) setBusy(false);
+    }
+  }
+
+  async function startRun(graph) {
+    if (state.runId || state.submittingRun) {
+      toast("A workflow is already starting or running.", true);
+      return;
+    }
+    state.submittingRun = true;
     setStatus("Starting workflow…");
     setBusy(true);
     try {
@@ -259,6 +288,8 @@
       setStatus("Run failed");
       state.runId = null;
       setBusy(false);
+    } finally {
+      state.submittingRun = false;
     }
   }
 
@@ -413,27 +444,7 @@
         .catch(() => {})
         .finally(() => setBusy(false));
     });
-    $("workflow-run").addEventListener("click", async () => {
-      if (!state.graph) {
-        toast("Open or create a workflow first.", true);
-        return;
-      }
-      if (state.runId) {  // checked synchronously, before the handshake await
-        toast("A workflow is already running.", true);
-        return;
-      }
-      setBusy(true);
-      const graph = await requestCanvasGraph();
-      if (!graph) {
-        setBusy(false);
-        toast("Could not read the current graph from the canvas. Run aborted.", true);
-        setStatus("Run aborted");
-        return;
-      }
-      state.graph = graph;
-      if (state.runId) return;  // re-check after the await; startRun re-checks too
-      startRun(graph);
-    });
+    $("workflow-run").addEventListener("click", runCurrent);
     $("workflow-cancel").addEventListener("click", cancelRun);
     window.addEventListener("message", (event) => {
       const data = event && event.data;
@@ -493,7 +504,6 @@
     state.active = true;
     if (!state.started) {
       state.started = true;
-      bind();
       try {
         state.catalog = await api("api/workflow/catalog");
       loadTemplates().catch(() => {});
@@ -560,6 +570,7 @@
     activate,
     saveGraph,
     startRun,
+    runCurrent,
     newWorkflow,
     addMediaInput,
     getGraph: () => requestCanvasGraph(3000),

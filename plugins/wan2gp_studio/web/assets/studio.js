@@ -197,7 +197,7 @@
     $("api-status").textContent = "Loading model catalog…";
     $("runtime-state").textContent = "Loading…";
     try {
-      state.models = await api("api/models?limit=300&availability=1");
+      state.models = await api("api/models?limit=500&availability=1");
       renderModels();
       renderModelLinks();
       const available = state.models.filter((model) => availabilityStatus(model) === "available").length;
@@ -297,8 +297,7 @@
     }).join("");
     $("queue-list").querySelectorAll("[data-cancel]").forEach((button) => button.addEventListener("click", () => cancelJob(button.dataset.cancel)));
     $("queue-list").querySelectorAll("[data-repeat]").forEach((button) => button.addEventListener("click", () => repeatJob(button.dataset.repeat)));
-    $("queue-list").querySelectorAll("[data-cancel]").forEach((button) => button.addEventListener("click", () => cancelJob(button.dataset.cancel)));
-    $("queue-list").querySelectorAll("[data-repeat]").forEach((button) => button.addEventListener("click", () => repeatJob(button.dataset.repeat)));
+    $("queue-list").querySelectorAll("[data-open-gallery]").forEach((button) => button.addEventListener("click", () => setView("gallery")));
   }
 
   async function refreshJobs() {
@@ -309,9 +308,6 @@
       renderJobs();
     } catch (_) {}
   }
-
-  $("queue-list").querySelectorAll("[data-open-gallery]").forEach((button) =>
-    button.addEventListener("click", () => setView("gallery")));
 
   async function repeatJob(jobId) {
     try {
@@ -399,7 +395,13 @@
     $("refresh-models").addEventListener("click", loadModels);
     $("refresh-queue").addEventListener("click", refreshJobs);
     $("load-preset").addEventListener("click", loadPreset);
-    $("run-generation").addEventListener("click", runGeneration);
+    $("run-generation").addEventListener("click", () => {
+      if (window.WanGPStudioCanvas && window.WanGPStudioCanvas.runCurrent) {
+        window.WanGPStudioCanvas.runCurrent();
+      } else {
+        toast("Workflow editor is not ready.", true);
+      }
+    });
     $("run-from-inspector").addEventListener("click", runGeneration);
     $("prompt-input").addEventListener("input", () => {
       $("settings-state").textContent = "Unsaved edits";
