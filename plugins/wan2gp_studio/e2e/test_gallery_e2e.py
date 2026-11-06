@@ -9,6 +9,8 @@ import re
 import time
 from pathlib import Path
 
+import pytest
+
 
 def _debug(page):
     return page.evaluate("window.WanGPStudioGallery.debug()")
