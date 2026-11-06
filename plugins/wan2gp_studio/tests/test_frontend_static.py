@@ -122,7 +122,7 @@ def test_primary_run_executes_the_live_canvas_graph():
 def test_workflow_handlers_are_bound_once():
     workflow = _read(os.path.join(ASSETS, "workflow.js"))
     studio = _read(os.path.join(ASSETS, "studio.js"))
-    assert len(re.findall(r"(?m)^  bind\\(\\);$", workflow)) == 1
+    assert len(re.findall(r"(?m)^  bind\(\);$", workflow)) == 1
     assert studio.count('querySelectorAll("[data-cancel]")') == 1
     assert studio.count('querySelectorAll("[data-repeat]")') == 1
     assert studio.count('querySelectorAll("[data-open-gallery]")') == 1
