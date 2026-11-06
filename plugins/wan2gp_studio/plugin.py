@@ -9,6 +9,7 @@ import copy
 import importlib
 import json
 import os
+import sys
 import threading
 import time
 import uuid
@@ -359,6 +360,16 @@ class WanGPStudioPlugin(WAN2GPPlugin):
 
     def get_session(self):
         return self._get_session()
+
+    def release_model(self) -> None:
+        """Free the VRAM the WanGP runtime holds.
+
+        Bridge to the host's own release_model(): the wgp module is already
+        loaded in this process, so no import-time work happens here."""
+        host = sys.modules.get("wgp")
+        release = getattr(host, "release_model", None)
+        if callable(release):
+            release()
 
     def _wanflow_enabled(self) -> bool:
         """WanFlow UI counts as enabled only when the Plugin Manager loaded it."""

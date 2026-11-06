@@ -561,6 +561,14 @@ def _workflow_unload_flags(graph: dict[str, Any]) -> bool:
     return bool(settings.get("unload_on_model_change") or settings.get("unload_around_heavy_processing"))
 
 
+def release_loaded_model(plugin) -> None:
+    """Unconditionally unload the model the session holds.
+
+    Used after failed or cancelled runs: a stale model must not stay in VRAM
+    because the workflow never asked for unloading."""
+    _release_loaded_model(plugin)
+
+
 def release_workflow_models(plugin, graph: dict[str, Any]) -> None:
     """Release models a workflow left resident; safe to call when flags are off."""
     if _workflow_unload_flags(graph):

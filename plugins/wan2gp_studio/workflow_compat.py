@@ -857,7 +857,7 @@ class WorkflowCompat:
             record["progress"] = 100 if record["status"] == "completed" else record["progress"]
             record["message"] = record["status"].capitalize()
             self._emit(record, "complete", {"status": record["status"], "outputs": record["outputs"]})
-            release = getattr(runner, "release_workflow_models", None)
+            honoring_release = getattr(runner, "release_workflow_models", None)
         except InterruptedError:
             record["status"] = "cancelled"
             record["message"] = "Cancelled"
@@ -874,11 +874,18 @@ class WorkflowCompat:
                     record["nodes"][node_id] = "error"
             self._emit(record, "error", {"message": str(exc)})
         finally:
-            if callable(release):
-                try:
-                    release(self.host, graph)
-                except Exception as exc:
-                    logger.warning("release_workflow_models failed for run %s: %s", record["id"], exc)
+            try:
+                if record["status"] in ("failed", "cancelled"):
+                    # A failed or cancelled run must not leave a stale model in
+                    # VRAM: release unconditionally, regardless of the graph's
+                    # unload flags.
+                    always = getattr(runner, "release_loaded_model", None)
+                    if callable(always):
+                        always(self.host)
+                elif callable(honoring_release):
+                    honoring_release(self.host, graph)
+            except Exception as exc:
+                logger.warning("model release failed for run %s: %s", record["id"], exc)
             self._emit(record, "closed", {"run_id": record["id"]})
 
     def _write_output_sidecar(self, path: str | Path, run_id: str, graph_name: str) -> None:
