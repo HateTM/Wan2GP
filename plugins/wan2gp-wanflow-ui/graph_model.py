@@ -98,6 +98,7 @@ def new_node(node_type: str, title: str | None = None, *, x: float = 80, y: floa
         "reference_composition": "Reference Composition",
         "ai_analyze": "AI Analyze",
         "prompt_enhancer": "Prompt Enhancer",
+        "prompt_engineer": "Prompt Engineer",
         "mask_editor": "Mask Editor",
         "magic_mask": "Magic Mask",
         "last_frame": "Last Frame",
@@ -280,6 +281,17 @@ def node_ports(node: dict[str, Any], model_defs: dict[str, dict[str, Any]] | Non
         return {"media": {"direction": "out", "type": ANY_MEDIA}}
     if node_type == "ai_analyze":
         return {"images": {"direction": "in", "type": f"{IMAGE}[]", "optional": True, "variadic": True}, "instruction": {"direction": "in", "type": TEXT, "optional": True}, "text": {"direction": "out", "type": TEXT}}
+    if node_type == "prompt_engineer":
+        mode = _text(params.get("mode") or "both").lower()
+        ports = {
+            "idea": {"direction": "in", "type": TEXT, "optional": True},
+            "images": {"direction": "in", "type": f"{IMAGE}[]", "optional": True, "variadic": True},
+        }
+        if mode in {"image", "both"}:
+            ports["image_prompt"] = {"direction": "out", "type": TEXT}
+        if mode in {"video", "both"}:
+            ports["video_prompt"] = {"direction": "out", "type": TEXT}
+        return ports
     if node_type == "prompt_enhancer":
         mode = _text(params.get("mode"))
         result = {
@@ -496,6 +508,8 @@ def validate_graph(graph: dict[str, Any], model_defs: dict[str, dict[str, Any]] 
                 if port_name == "prompt" and params.get("prompt"):
                     continue
                 errors.append(f"Required input {port_name} is not connected on {node['title']}.")
+        if node["type"] == "prompt_engineer" and _text((node.get("params") or {}).get("mode") or "both").lower() not in {"image", "video", "both"}:
+            errors.append(f"{node['title']} requires Image, Video or Both mode.")
         if node["type"] in GENERATION_NODE_TYPES:
             model_type = _text((node.get("params") or {}).get("model_type"))
             if not model_type:

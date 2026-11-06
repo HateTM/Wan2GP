@@ -89,6 +89,10 @@
       row('Multiplier',p.skip_steps_multiplier);
       row('Start',p.skip_steps_start_step_perc===undefined?'':`${p.skip_steps_start_step_perc}%`);
     }else if(node.type==='reference_composition')row('Reference size',p.image_refs_relative_size?`${p.image_refs_relative_size}% of output`:'Model default');
+    else if(node.type==='prompt_engineer'){
+      row('Mode',String(p.mode||'both').toUpperCase());
+      row('AI model',(catalog.ai_models||[]).find(item=>Number(item.id)===Number(p.model??3))?.label||'Wan2GP AI');
+    }
     else if(node.type==='prompt_enhancer'){
       const model=modelById(p.model_type);
       row('Target',model?modelLabel(model):'Select model');
@@ -215,6 +219,13 @@
   }
   function portsFor(node){
     if(['generate_image','edit_image','inpaint_image','generate_video','edit_video','inpaint_video','generate_audio'].includes(node.type)) return modelPorts(node);
+    if(node.type==='prompt_engineer'){
+      const mode=String(node.params?.mode||'both').toLowerCase();
+      const ports=[{name:'idea',direction:'in',type:'TEXT',optional:true},{name:'images',direction:'in',type:'IMAGE[]',optional:true,variadic:true}];
+      if(mode==='image'||mode==='both')ports.push({name:'image_prompt',direction:'out',type:'TEXT'});
+      if(mode==='video'||mode==='both')ports.push({name:'video_prompt',direction:'out',type:'TEXT'});
+      return ports;
+    }
     if(node.type==='prompt_enhancer'){
       const mode=String(node.params?.mode||'');
       const ports=[{name:'prompt',direction:'in',type:'TEXT',optional:true},{name:'text',direction:'out',type:'TEXT'}];
@@ -354,6 +365,26 @@
     const bind=(ids,update)=>ids.forEach(id=>$(id)?.addEventListener('change',update));
     const rawSettings=()=>{try{p.settings=JSON.parse($('editRaw').value||'{}');delete p.warning;}catch(error){p.warning='Native settings JSON is invalid.';}};
     const title=`<label>Title</label><input id="editTitle" value="${escapeAttr(node.title)}">`;
+
+    if(node.type==='prompt_engineer'){
+      const models=catalog.ai_models||[];
+      const mode=String(p.mode||'both').toLowerCase();
+      const connected=Boolean(incomingEdge(node.id,'idea'));
+      host.innerHTML=title+`<label>Mode</label><select id="editEngineerMode"><option value="both" ${mode==='both'?'selected':''}>Both (image + video)</option><option value="image" ${mode==='image'?'selected':''}>Image (T2I / I2I)</option><option value="video" ${mode==='video'?'selected':''}>Video (T2V / I2V)</option></select><label>Idea / scene</label><textarea id="editEngineerIdea" placeholder="Describe the scene and action..." ${connected?'disabled':''}>${escapeHtml(p.idea||'')}</textarea>${inputOverrideHint(node,'idea','Idea')}<label>AI model</label><select id="editEngineerModel">${models.map(item=>`<option value="${item.id}" ${Number(p.model??3)===Number(item.id)?'selected':''}>${escapeHtml(item.label)}</option>`).join('')}</select><label>Max tokens</label><input id="editEngineerTokens" type="number" min="32" max="1024" value="${escapeAttr(p.max_tokens??768)}"><div class="hint">Connect optional reference images. image_prompt and video_prompt are TEXT outputs for generation nodes. Uses the native WanGP AI runtime.</div>`;
+      const update=()=>{
+        node.title=$('editTitle').value.trim()||'Prompt Engineer';
+        const mode=$('editEngineerMode').value;
+        p.mode=mode;
+        if(!connected)p.idea=$('editEngineerIdea').value;
+        p.model=Number($('editEngineerModel').value||3);
+        p.max_tokens=Math.max(32,Math.min(1024,Number($('editEngineerTokens').value||768)));
+        const valid=mode==='both'?['image_prompt','video_prompt']:mode==='image'?['image_prompt']:['video_prompt'];
+        graph.edges=graph.edges.filter(edge=>edge.source?.node!==node.id||valid.includes(edge.source?.port));
+        render();
+      };
+      bind(['editTitle','editEngineerMode','editEngineerIdea','editEngineerModel','editEngineerTokens'],update);
+      return;
+    }
 
     if(node.type==='prompt_enhancer'){
       const requestedTarget=String(p.target_media||'').toLowerCase();
