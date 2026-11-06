@@ -820,6 +820,8 @@ class WorkflowCompat:
 
     def _run_worker(self, record: dict[str, Any], graph: dict[str, Any], inputs: list[str], runner: Any) -> None:
         release = None
+        honoring_release = getattr(runner, "release_workflow_models", None)
+        graph_types = {node.get("id"): node.get("type") for node in (graph.get("nodes") or [])}
         try:
             if runner is None or isinstance(runner, Exception):
                 raise WorkflowUnavailable(f"WanFlow UI runner is unavailable: {runner}")
@@ -851,13 +853,15 @@ class WorkflowCompat:
             )
             record["outputs"] = list(outputs or [])
             for output in outputs or []:
-                self._write_output_sidecar(output, record["id"], str(graph.get("name") or "Workflow"))
+                self._write_output_sidecar(output, record["id"], str(graph.get("name") or "Workflow"), graph)
             record["variables"] = dict(variables or {})
-            record["status"] = "cancelled" if record["cancel_requested"] and not outputs else "completed"
+            # Cancellation always wins, even with partial outputs on disk:
+            # the record keeps them, but the status is unambiguous.
+            record["status"] = "cancelled" if record["cancel_requested"] else "completed"
+            record["partial"] = bool(record["cancel_requested"] and outputs)
             record["progress"] = 100 if record["status"] == "completed" else record["progress"]
             record["message"] = record["status"].capitalize()
             self._emit(record, "complete", {"status": record["status"], "outputs": record["outputs"]})
-            honoring_release = getattr(runner, "release_workflow_models", None)
         except InterruptedError:
             record["status"] = "cancelled"
             record["message"] = "Cancelled"
@@ -875,20 +879,31 @@ class WorkflowCompat:
             self._emit(record, "error", {"message": str(exc)})
         finally:
             try:
-                if record["status"] in ("failed", "cancelled"):
-                    # A failed or cancelled run must not leave a stale model in
-                    # VRAM: release unconditionally, regardless of the graph's
-                    # unload flags.
-                    always = getattr(runner, "release_loaded_model", None)
-                    if callable(always):
-                        always(self.host)
-                elif callable(honoring_release):
-                    honoring_release(self.host, graph)
+                # A failed or cancelled generation run must not leave a stale
+                # model in VRAM; a completed run honors the graph's unload
+                # flags. A release never fires while another workflow is still
+                # running, so it cannot interfere with concurrent work.
+                generation_ran = any(
+                    str(graph_types.get(node_id, "")).startswith(("generate", "edit_", "inpaint_"))
+                    and node_state in ("running", "done")
+                    for node_id, node_state in record["nodes"].items()
+                )
+                others_active = any(
+                    other is not record and other.get("status") == "running"
+                    for other in self._runs.values()
+                )
+                if not others_active:
+                    if record["status"] in ("failed", "cancelled") and generation_ran:
+                        always = getattr(runner, "release_loaded_model", None)
+                        if callable(always):
+                            always(self.host)
+                    elif callable(honoring_release):
+                        honoring_release(self.host, graph)
             except Exception as exc:
                 logger.warning("model release failed for run %s: %s", record["id"], exc)
             self._emit(record, "closed", {"run_id": record["id"]})
 
-    def _write_output_sidecar(self, path: str | Path, run_id: str, graph_name: str) -> None:
+    def _write_output_sidecar(self, path: str | Path, run_id: str, graph_name: str, graph: dict[str, Any] | None = None) -> None:
         """Link a produced file back to its workflow run.
 
         Only files inside this plugin's output root get a sidecar (imported
@@ -908,7 +923,13 @@ class WorkflowCompat:
                 except ValueError:
                     data = {}
             workflow = data.get("workflow") if isinstance(data.get("workflow"), dict) else {}
-            workflow.update({"run_id": str(run_id), "graph": str(graph_name)})
+            workflow.update({"run_id": str(run_id), "graph_name": str(graph_name)})
+            # V4.3: keep the full normalized graph so the Gallery can re-open
+            # the run's workflow even after a host restart.
+            if isinstance(graph, dict) and graph.get("nodes"):
+                workflow["nodes"] = copy.deepcopy(graph.get("nodes") or [])
+                workflow["edges"] = copy.deepcopy(graph.get("edges") or [])
+                workflow["settings"] = copy.deepcopy(graph.get("settings") or {})
             data["workflow"] = workflow
             sidecar.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         except OSError:

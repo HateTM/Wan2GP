@@ -63,13 +63,16 @@ def server_url(tmp_path_factory):
         "save_path": str(root / "videos"),
         "audio_save_path": str(root / "audio"),
     }
+    # Workflow runs through the real worker need a session object; the e2e
+    # harness has no live WanGP runtime, so the binding is a no-op stub.
+    plugin._get_session = lambda: {"_ui_local": None}
+    sys.modules["shared.deepy.thumbnails"] = None
     app = plugin.create_web_app()
     # The harness tests gallery bounds, not preview rendering. The shared
     # thumbnail engine's import chain pulls heavy optional deps (rembg,
     # whisper, ...) the runner does not carry; stubbing the module makes every
     # thumbnail request fail fast and deterministically (the cards show their
     # broken-image state) instead of stalling the import lock mid-suite.
-    sys.modules["shared.deepy.thumbnails"] = None
     config = uvicorn.Config(app, host="127.0.0.1", port=_free_port(), log_level="warning")
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
@@ -95,6 +98,9 @@ def browser():
 @pytest.fixture()
 def page(browser, server_url):
     browser_page = browser.new_page(viewport={"width": 1440, "height": 900})
+    browser_page.on("pageerror", lambda error: print("PAGEERROR:", str(error)[:200]))
+    browser_page.on("console", lambda message: message.type == "error" and print("CONSOLE:", str(message.text)[:200]))
+    browser_page.on("response", lambda response: response.status >= 500 and print("HTTP", response.status, response.url[:200]))
     browser_page.goto(server_url + "/#gallery")
     browser_page.wait_for_selector("#gallery-view:not([hidden])", timeout=15000)
     browser_page.wait_for_selector(".media-card:not(.skeleton)", timeout=20000)

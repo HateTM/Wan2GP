@@ -159,8 +159,8 @@
     if (!node) return;
     if (heading) {
       heading.hidden = false;
-      heading.innerHTML = '<div class="inspector-empty-icon">☑</div><strong>Node: ' + S.esc(node.title || node.type) +
-        '</strong><span>' + S.esc(node.type) + (node.params && node.params.path ? " · " + S.esc(node.params.path) : "") + "</span>";
+      heading.innerHTML = '<div class="inspector-empty-icon">☑</div><strong>Node: ' + esc(node.title || node.type) +
+        '</strong><span>' + esc(node.type) + (node.params && node.params.path ? " · " + esc(node.params.path) : "") + "</span>";
     }
     const modelType = node.params && node.params.model_type;
     if (modelType) {
@@ -188,19 +188,23 @@
   async function applyToNode() {
     const node = state.nodeSelected;
     if (!node) return;
-    let settings = null;
+    let parsed = null;
     try {
-      settings = JSON.parse(document.getElementById("settings-json").value || "{}");
+      parsed = JSON.parse(document.getElementById("settings-json").value || "{}");
     } catch (error) {
       toast("Settings JSON is invalid.", true);
       return;
     }
     const prompt = document.getElementById("prompt-input").value;
-    const modelType = settings.model_type || (node.params && node.params.model_type) || null;
+    const modelType = parsed.model_type || (node.params && node.params.model_type) || null;
+    // Model nodes take native WanGP settings; plain nodes (inputs, ffmpeg)
+    // edit their own params (path, slot, ...) — never mix the two.
+    const isModelNode = Boolean(node.params && (node.params.model_type || node.params.settings));
     const applied = window.WanGPStudioCanvas.applyToSelectedNode({
-      settings: settings,
       prompt: prompt,
-      model_type: modelType
+      model_type: modelType,
+      settings: isModelNode ? parsed : null,
+      params: isModelNode ? null : parsed
     });
     toast(applied ? "Applied to the selected node." : "The canvas is unavailable.", !applied);
   }

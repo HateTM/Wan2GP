@@ -130,3 +130,49 @@ def test_job_repeat_unknown_job_returns_404(tmp_path, monkeypatch):
     plugin._get_session = lambda: StubSession()
     client = TestClient(plugin.create_web_app())
     assert client.post("/api/jobs/does-not-exist/repeat").status_code == 404
+
+
+def test_finished_jobs_persist_and_repeat_after_restart(tmp_path, monkeypatch):
+    """V4.4: terminal jobs survive a host restart via the on-disk history,
+    and a restart-era repeat resubmits the stored settings."""
+    from fastapi.testclient import TestClient as _TC
+    from wan2gp_studio.plugin import WanGPStudioPlugin as _Plugin
+
+    workspaces = tmp_path / "workspaces"
+
+    def build():
+        monkeypatch.setenv("STUDIO_PLUGINS_ROOT", str(tmp_path / "empty-plugins"))
+        plugin = _Plugin()
+        plugin.server_config = {
+            "image_save_path": str(tmp_path / "images"),
+            "save_path": str(tmp_path / "videos"),
+            "audio_save_path": str(tmp_path / "audio"),
+            "workspaces_dir": str(workspaces),
+        }
+        session = StubSession()
+        plugin._get_session = lambda: session
+        return _TC(plugin.create_web_app()), session
+
+    client, _ = build()
+    settings = {"model_type": "t2v-test", "prompt": "persist me"}
+    first = client.post("/api/jobs", json={"settings": settings})
+    assert first.status_code == 200, first.text
+    job_id = first.json()["job_id"]
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if client.get(f"/api/jobs/{job_id}").json().get("status") == "completed":
+            break
+        time.sleep(0.1)
+    history_path = workspaces / "studio_jobs.json"
+    assert history_path.is_file()
+    assert any(item["id"] == job_id for item in json.loads(history_path.read_text(encoding="utf-8")))
+
+    # "restart": a brand-new plugin instance over the same workspaces dir
+    client2, session2 = build()
+    listing = client2.get("/api/jobs").json()
+    assert any(job["id"] == job_id for job in listing), listing
+    repeat = client2.post(f"/api/jobs/{job_id}/repeat")
+    assert repeat.status_code == 200, repeat.text
+    deadline = time.time() + 10
+    while time.time() < deadline and len(getattr(session2, "submitted", [])) < 1:
+        time.sleep(0.1)

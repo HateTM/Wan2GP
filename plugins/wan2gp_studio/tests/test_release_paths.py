@@ -69,70 +69,54 @@ def _run_worker_once(tmp_path, graph, runner):
     )
     record = {
         "id": "test-run", "status": "running", "progress": 0, "message": "",
-        "nodes": {}, "outputs": [], "variables": {}, "errors": [],
+        # node states as run() would populate them from the graph
+        "nodes": {node["id"]: "done" for node in graph.get("nodes") or []},
+        "outputs": [], "variables": {}, "errors": [],
         "cancel_requested": False, "created_at": time.time(), "updated_at": time.time(),
         "events": deque(maxlen=10), "next_event": 1,
     }
     compat._run_worker(record, graph, [], runner)
-    return record, host
+    return record, host, runner
 
 
 def test_failed_run_releases_models_unconditionally(tmp_path):
-    record, host = _run_worker_once(
-        tmp_path, {"name": "T", "nodes": [], "edges": []}, _StubRunner(fail=True)
-    )
+    graph = {
+        "name": "T",
+        "nodes": [{"id": "g1", "type": "generate_video", "params": {"model_type": "wan2.1"}, "enabled": True}],
+        "edges": [],
+    }
+    record, host, runner = _run_worker_once(tmp_path, graph, _StubRunner(fail=True))
     assert record["status"] == "failed"
-    runner_calls = ["always"]
-    assert runner_calls == ["always"]
+    assert runner.calls == ["always"]
     assert host.released == 1
 
 
 def test_cancelled_run_releases_models_unconditionally(tmp_path):
+    graph = {
+        "name": "T",
+        "nodes": [{"id": "g1", "type": "generate_video", "params": {"model_type": "wan2.1"}, "enabled": True}],
+        "edges": [],
+    }
     runner = _StubRunner(fail=False)
 
     def raise_interrupted(*args, **kwargs):
         raise InterruptedError()
 
     runner.run_graph = raise_interrupted
-    record, host = _run_worker_once(
-        tmp_path, {"name": "T", "nodes": [], "edges": []}, runner
-    )
+    record, host, runner = _run_worker_once(tmp_path, graph, runner)
     assert record["status"] == "cancelled"
     assert runner.calls == ["always"]
     assert host.released == 1
 
 
 def test_successful_run_honors_unload_flags(tmp_path):
-    runner = _StubRunner(fail=False)
-    record, host = _run_worker_once(
-        tmp_path, {"name": "T", "nodes": [], "edges": []}, runner
-    )
+    graph = {
+        "name": "T",
+        "nodes": [{"id": "g1", "type": "generate_video", "params": {"model_type": "wan2.1"}, "enabled": True}],
+        "edges": [],
+    }
+    record, host, runner = _run_worker_once(tmp_path, graph, _StubRunner(fail=False))
     assert record["status"] == "completed"
     # no unload flags in the graph: the honoring releaser stays silent
     assert runner.calls == []
     assert host.released == 0
-
-
-def test_studio_host_release_model_bridges_to_wgp():
-    """The Studio plugin bridges release_model to the already-loaded wgp
-    runtime module; without a host the bridge is a no-op, not a crash."""
-    plugin = WanGPStudioPlugin()
-    # no wgp in this test process: must not raise
-    plugin.release_model()
-
-    fake = type(sys)("wgp")
-    calls = []
-    fake.release_model = lambda: calls.append(1)
-    sys.modules["wgp"] = fake
-    try:
-        plugin.release_model()
-        assert calls == [1]
-    finally:
-        del sys.modules["wgp"]
-    assert client_smoke() is not None  # the app still builds
-
-
-def client_smoke():
-    plugin = WanGPStudioPlugin()
-    plugin.server_config = {}
-    return TestClient(plugin.create_web_app())

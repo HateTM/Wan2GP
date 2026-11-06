@@ -514,6 +514,12 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         async def studio_security_headers(request: Request, call_next):
             response = await call_next(request)
             response.headers["X-Frame-Options"] = "DENY"
+            # Dynamic API data must never be served from the browser cache:
+            # heuristic caching of unmarked GET 200s made the job/run polls
+            # return stale records (audit V4, e2e chain test).
+            if request.url.path.startswith("/api/"):
+                response.headers["Cache-Control"] = "no-store"
+
             if "content-security-policy" not in {key.lower() for key in response.headers}:
                 response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
             return response
@@ -703,8 +709,8 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             return media_index.query(kind=kind, q=q, sort=sort, limit=limit, offset=offset)
 
         @app.get("/api/media/roots")
-        def media_roots():
-            media_index.refresh()
+        def media_roots(force: bool = False):
+            media_index.refresh(force=force)
             return media_index.stats()
 
         @app.get("/api/media/{media_id}")
@@ -1164,25 +1170,33 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             workspaces = config.get("workspaces_dir") or str(Path(__file__).resolve().parents[2] / "workspaces")
             return Path(workspaces) / "studio_jobs.json"
 
+        _jobs_history_lock = threading.Lock()
+
         def _persist_finished_jobs() -> None:
-            """V4.4: terminal jobs survive host restarts (bounded to 50)."""
-            try:
-                with jobs_lock:
-                    terminal = {"completed", "failed", "cancelled"}
-                    records = [record.snapshot() for record in jobs.values()
-                               if record.snapshot()["status"] in terminal]
+            """V4.4: terminal jobs survive host restarts (bounded to 50).
+            Writes are atomic (tmp + os.replace) and serialized with the same
+            lock the read path uses."""
+            with _jobs_history_lock:
                 try:
-                    disk = json.loads(_jobs_history_path().read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    disk = []
-                by_id = {item.get("id"): item for item in disk if isinstance(item, dict)}
-                for item in records:
-                    by_id[item["id"]] = item
-                merged = sorted(by_id.values(), key=lambda item: item.get("created_at", 0), reverse=True)[:50]
-                _jobs_history_path().parent.mkdir(parents=True, exist_ok=True)
-                _jobs_history_path().write_text(json.dumps(merged, ensure_ascii=False), encoding="utf-8")
-            except Exception as exc:
-                print(f"[Studio] job history persist failed: {exc}")
+                    with jobs_lock:
+                        terminal = {"completed", "failed", "cancelled"}
+                        records = [record.snapshot() for record in jobs.values()
+                                   if record.snapshot()["status"] in terminal]
+                    try:
+                        disk = json.loads(_jobs_history_path().read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        disk = []
+                    by_id = {item.get("id"): item for item in disk if isinstance(item, dict)}
+                    for item in records:
+                        by_id[item["id"]] = item
+                    merged = sorted(by_id.values(), key=lambda item: item.get("created_at", 0), reverse=True)[:50]
+                    target = _jobs_history_path()
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    tmp_file = target.with_suffix(".tmp")
+                    tmp_file.write_text(json.dumps(merged, ensure_ascii=False), encoding="utf-8")
+                    os.replace(tmp_file, target)
+                except Exception as exc:
+                    print(f"[Studio] job history persist failed: {exc}")
 
         class _StoredJob:
             """Read-only view of a job restored from the on-disk history."""
@@ -1197,16 +1211,17 @@ class WanGPStudioPlugin(WAN2GPPlugin):
 
         @app.get("/api/jobs")
         def list_jobs():
-            with jobs_lock:
-                records = list(jobs.values())
-                memory_ids = {record.id for record in records}
-            try:
-                disk = json.loads(_jobs_history_path().read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                disk = []
-            for item in disk if isinstance(disk, list) else []:
-                if isinstance(item, dict) and item.get("id") not in memory_ids:
-                    records.append(_StoredJob(item))
+            with _jobs_history_lock:
+                with jobs_lock:
+                    records = list(jobs.values())
+                    memory_ids = {record.id for record in records}
+                try:
+                    disk = json.loads(_jobs_history_path().read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    disk = []
+                for item in disk if isinstance(disk, list) else []:
+                    if isinstance(item, dict) and item.get("id") not in memory_ids:
+                        records.append(_StoredJob(item))
             records.sort(key=lambda item: item.created_at, reverse=True)
             return [record.snapshot() for record in records[:50]]
 

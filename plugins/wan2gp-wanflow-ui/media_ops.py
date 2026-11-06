@@ -15,6 +15,7 @@ def _run(command: list[str], cancel_check=None) -> subprocess.CompletedProcess[s
     kwargs: dict[str, Any] = {
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
+        "stdin": subprocess.DEVNULL,  # ffmpeg waits on interactive stdin otherwise
         "text": True,
         "encoding": "utf-8",
         "errors": "replace",

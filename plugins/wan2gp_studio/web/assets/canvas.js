@@ -1,5 +1,5 @@
 (() => {
-  const graph = window.W2GP_INITIAL_GRAPH || {nodes: [], edges: []};
+  let graph = window.W2GP_INITIAL_GRAPH || {nodes: [], edges: []};
   const catalog = window.W2GP_NODE_CATALOG || {nodes: [], models: [], processes: []};
   graph.groups = Array.isArray(graph.groups) ? graph.groups : [];
   let selected = null;
@@ -534,7 +534,7 @@
     bind(['editTitle','editRaw'],update);
   }
 
-  function applyNodeSettings(data){if(!selected)return;const node=graph.nodes.find(item=>item.id===selected);if(!node)return;node.params=node.params||{};if(typeof data.prompt==='string'&&data.prompt.length)node.params.prompt=data.prompt;if(data.model_type)node.params.model_type=data.model_type;if(data.settings&&typeof data.settings==='object'){node.params.settings=Object.assign({},node.params.settings||{},data.settings);}render();}
+  function applyNodeSettings(data){if(!selected)return;const node=graph.nodes.find(item=>item.id===selected);if(!node)return;node.params=node.params||{};if(typeof data.prompt==='string')node.params.prompt=data.prompt;if(data.model_type)node.params.model_type=data.model_type;if(data.settings&&typeof data.settings==='object'){node.params.settings=Object.assign({},node.params.settings||{},data.settings);}if(data.params&&typeof data.params==='object'){node.params=Object.assign({},node.params,data.params);}render();}
   function addMediaNode(kind,path){const type={image:'input_image',video:'input_video',audio:'input_audio'}[kind];if(!type)return;const index=graph.nodes.length;const node={id:uid(),type,title:(catalog.nodes.find(item=>item.type===type)||{}).label||type,position:{x:120+(index%4)*280,y:80+Math.floor(index/4)*190},params:{path:String(path||'')},ui:{},enabled:true};graph.nodes.push(node);selectNode(node.id);selectedEdge=null;fit();render();}
   function addNode(type){const index=graph.nodes.length;const node={id:uid(),type,title:(catalog.nodes.find(item=>item.type===type)||{}).label||type,position:{x:120+(index%4)*280,y:80+Math.floor(index/4)*190},params:{},ui:{},enabled:true};if(type.startsWith('generate')||type.startsWith('edit_')||type.startsWith('inpaint_'))node.params.settings={};if(type==='text')node.params.text='';if(type==='ai_analyze'){node.params.instruction='';node.params.model=3;node.params.max_tokens=192;node.params.output_name='analysis';}if(type==='prompt_enhancer'){node.params.target_media='';node.params.model_type='';node.params.mode='';node.params.seed=-1;node.params.output_name='enhanced_prompt';}if(type==='resolution_config')node.params.resolution_tier='auto';if(type==='lora_stack')node.params.activated_loras=[];graph.nodes.push(node);selectNode(node.id);selectedEdge=null;render();}
   function createGroup(){const ids=[...selectedNodes];if(!ids.length&&selected)ids.push(selected);if(!ids.length)return;const colors=['#395b78','#6b4f8a','#39785f','#89633d','#82506a'];const group={id:uid(),title:`Group ${graph.groups.length+1}`,color:colors[graph.groups.length%colors.length],node_ids:ids,enabled:true};graph.groups.push(group);selectGroup(group.id);render();}

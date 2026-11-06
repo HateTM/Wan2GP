@@ -112,7 +112,37 @@
     frame.srcdoc = document_;
     state.frame = frame;
     $("workflow-unavailable").hidden = true;
-    setTimeout(flushPendingMedia, 150);
+    flushPendingMedia();
+  }
+
+  function flushPendingMedia() {
+    if (!state.pendingMedia.length) return;
+    const frameWindow = state.frame && state.frame.contentWindow;
+    if (!frameWindow) return;
+    // A srcdoc iframe installs its message listeners asynchronously; probing
+    // with a graph handshake is the only reliable readiness signal. Bounded
+    // retries, then the queued nodes are dropped with an honest toast.
+    requestCanvasGraph(1500).then((graph) => {
+      if (!state.pendingMedia.length) return;
+      if (graph === null) {
+        state.flushAttempts = (state.flushAttempts || 0) + 1;
+        if (state.flushAttempts <= 20) {
+          setTimeout(flushPendingMedia, 300);
+        } else {
+          state.pendingMedia.splice(0);
+          toast("Could not deliver the gallery media to the workflow canvas.", true);
+        }
+        return;
+      }
+      for (const request of state.pendingMedia.splice(0)) {
+        frameWindow.postMessage({
+          type: "WAN2GP_WORKFLOWS_V2",
+          action: "add_media",
+          kind: request.kind,
+          path: String(request.path || "")
+        }, "*");
+      }
+    });
   }
 
   async function rebuildWithCatalog(graph) {
@@ -445,13 +475,6 @@
         .finally(() => setBusy(false));
     });
     $("workflow-run").addEventListener("click", runCurrent);
-    window.addEventListener("message", (event) => {
-      const data = event && event.data;
-      if (!data || data.type !== "WAN2GP_WORKFLOWS_V2" || data.action !== "node_selected") return;
-      if (window.WanGPStudio && window.WanGPStudio.onNodeSelected) {
-        window.WanGPStudio.onNodeSelected(data.node);
-      }
-    });
     $("workflow-cancel").addEventListener("click", cancelRun);
     window.addEventListener("message", (event) => {
       const data = event && event.data;
@@ -459,6 +482,12 @@
       if (!frameOriginAllowed(event.origin)) return;
       const frameWindow = state.frame && state.frame.contentWindow;
       if (!frameWindow || event.source !== frameWindow) return;  // canvas iframe only
+      if (data.action === "node_selected") {
+        if (window.WanGPStudio && window.WanGPStudio.onNodeSelected) {
+          window.WanGPStudio.onNodeSelected(data.node);
+        }
+        return;
+      }
       if (data.action === "graph") {
         const resolve = typeof data.request_id === "string" ? pendingGraphRequests.get(data.request_id) : null;
         if (!resolve) return;
@@ -519,7 +548,13 @@
         setStatus("Catalog ready · " + count + " nodes · " + models + " models");
         $("workflow-node-count").textContent = count + " node types";
         await refreshWorkflowList();
-        await buildFrame({ name: "Untitled workflow", nodes: [], edges: [], groups: [] });
+        // activate() races loadGraphIntoCanvas: "Open workflow" in the Gallery
+        // fires setView and load in the same tick, so a pending graph must not
+        // be overwritten by the empty template - build whichever is newer.
+        const pending = state.graph && Array.isArray(state.graph.nodes) && state.graph.nodes.length
+          ? state.graph
+          : { name: "Untitled workflow", nodes: [], edges: [], groups: [] };
+        await buildFrame(pending);
       } catch (error) {
         const host = $("workflow-unavailable");
         host.hidden = false;
@@ -542,19 +577,6 @@
   // and are flushed after every buildFrame() - activate() rebuilds the frame
   // from an empty literal, so folding nodes into state.graph would lose them.
   state.pendingMedia = [];
-
-  function flushPendingMedia() {
-    const frameWindow = state.frame && state.frame.contentWindow;
-    if (!frameWindow) return;
-    for (const request of state.pendingMedia.splice(0)) {
-      frameWindow.postMessage({
-        type: "WAN2GP_WORKFLOWS_V2",
-        action: "add_media",
-        kind: request.kind,
-        path: String(request.path || "")
-      }, "*");
-    }
-  }
 
   function addMediaInput(kind, path) {
     const nodeType = { image: "input_image", video: "input_video", audio: "input_audio" }[kind];
