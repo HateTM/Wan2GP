@@ -123,9 +123,15 @@ def test_workflow_handlers_are_bound_once():
     workflow = _read(os.path.join(ASSETS, "workflow.js"))
     studio = _read(os.path.join(ASSETS, "studio.js"))
     assert len(re.findall(r"(?m)^  bind\(\);$", workflow)) == 1
-    assert studio.count('querySelectorAll("[data-cancel]")') == 1
-    assert studio.count('querySelectorAll("[data-repeat]")') == 1
+    # V4.5 audit: job actions are bound in exactly TWO scoped sites - the
+    # workflow drawer (bindJobActions over #queue-list) and the unified
+    # registry (renderTasks over #queue-view-list). Each render pass binds
+    # its own fresh container once; the same element is never bound twice.
+    assert studio.count('querySelectorAll("[data-cancel]")') == 2
+    assert studio.count('querySelectorAll("[data-repeat]")') == 2
     assert studio.count('querySelectorAll("[data-open-gallery]")') == 1
+    assert studio.count("bindJobActions($(\"queue-list\"))") == 1
+    assert 'querySelectorAll("[data-open-graph]")' in studio
 
 
 def test_model_catalog_requests_complete_available_page():

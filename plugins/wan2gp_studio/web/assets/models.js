@@ -127,10 +127,16 @@
         chip.classList.toggle("selected", chip === button));
       render();
     });
-    $("models-refresh").addEventListener("click", () => {
-      // the shared catalog lives in studio.js: refresh it there, then re-render
-      document.getElementById("refresh-models").click();
-      window.setTimeout(activate, 1200);
+    $("models-refresh").addEventListener("click", async () => {
+      // the shared catalog lives in studio.js: await the real reload, then
+      // re-render (a fixed delay races the catalog fetch)
+      $("models-refresh").disabled = true;
+      try {
+        await S.reloadModels();
+        activate();
+      } finally {
+        $("models-refresh").disabled = false;
+      }
     });
     $("models-open-generate").addEventListener("click", openInGenerate);
   }

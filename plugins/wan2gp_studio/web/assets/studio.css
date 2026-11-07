@@ -211,10 +211,10 @@ body.runtime-down .runtime-pill i{background:var(--red)}
 }
 @media (prefers-reduced-motion:reduce){.inspector-panel{transition:none}}
 @media (max-width:1024px){
-  .pane-toggle{display:none}
   body.inspector-open .inspector-panel{display:flex}
   body.library-collapsed .studio-grid{grid-template-columns:minmax(0,1fr)}
+  body.library-collapsed .studio-grid .model-panel{display:none}
+  body.library-collapsed .generate-grid .model-panel{display:none}
   .inspector-panel{position:static;width:auto;transform:none;box-shadow:none;pointer-events:auto}
-  body:not(.inspector-open) .inspector-panel{display:none}
-  body:not(.inspector-open) .studio-grid .inspector-panel{order:3}
+  body:not(.inspector-open) .studio-grid .inspector-panel{display:none}
 }

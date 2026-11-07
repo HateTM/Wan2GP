@@ -2,6 +2,7 @@
   "use strict";
   const state = { models: [], selectedModel: null, modelDetail: null, currentSettings: null, filter: "all", query: "", jobs: new Map(), eventSources: new Map(), zoom: 100, view: "workflow" };
   const $ = (id) => document.getElementById(id);
+  const S_ = (prefix, value) => esc(String(value == null ? "" : value));
   const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
   function toast(message, error) {
@@ -166,20 +167,30 @@
     if (modelType) {
       selectModel(modelType).then(() => {
         const promptBox = document.getElementById("prompt-input");
-        if (promptBox && node.params && node.params.prompt) promptBox.value = node.params.prompt;
+        // restore exactly what the node carries - including an EMPTY prompt
+        if (promptBox) promptBox.value = node.params && typeof node.params.prompt === "string" ? node.params.prompt : "";
         state.nodeSelected = node;
         const apply = document.getElementById("apply-to-node");
         if (apply) apply.hidden = false;
       }).catch(() => {});
     } else {
-      // input/ffmpeg nodes: no model settings, but expose the path
+      // input/ffmpeg nodes: no model settings. Any previously selected model
+      // must be fully forgotten, or "Run this model" would submit the old
+      // model's settings from behind a plain node (audit P2).
+      state.selectedModel = null;
+      state.modelDetail = null;
+      state.currentSettings = null;
+      state.nodeSelected = node;
       const editor = document.getElementById("inspector-editor");
       const json = document.getElementById("settings-json");
+      const promptBox = document.getElementById("prompt-input");
+      if (promptBox) promptBox.value = "";  // prompts belong to model nodes only
       if (editor && json) {
         editor.hidden = false;
         json.value = JSON.stringify(node.params || {}, null, 2);
       }
-      state.nodeSelected = node;
+      const run = document.getElementById("run-from-inspector");
+      if (run) run.disabled = true;
       const apply = document.getElementById("apply-to-node");
       if (apply) apply.hidden = false;
     }
@@ -195,14 +206,14 @@
       toast("Settings JSON is invalid.", true);
       return;
     }
-    const prompt = document.getElementById("prompt-input").value;
     const modelType = parsed.model_type || (node.params && node.params.model_type) || null;
-    // Model nodes take native WanGP settings; plain nodes (inputs, ffmpeg)
-    // edit their own params (path, slot, ...) — never mix the two.
+    // Model nodes take native WanGP settings (prompt included); plain nodes
+    // (inputs, ffmpeg) edit their own params (path, slot, ...) - never mix
+    // the two, and never push a stale editor prompt into a plain node.
     const isModelNode = Boolean(node.params && (node.params.model_type || node.params.settings));
     const applied = window.WanGPStudioCanvas.applyToSelectedNode({
-      prompt: prompt,
-      model_type: modelType,
+      prompt: isModelNode ? document.getElementById("prompt-input").value : null,
+      model_type: isModelNode ? modelType : null,
       settings: isModelNode ? parsed : null,
       params: isModelNode ? null : parsed
     });
@@ -375,6 +386,86 @@
     host.querySelectorAll("[data-open-gallery]").forEach((button) => button.addEventListener("click", () => setView("gallery")));
   }
 
+  function taskCard(task) {
+    const status = String(task.status || "queued");
+    const cls = status === "completed" || status === "failed" ? " " + status : "";
+    const kindBadge = task.kind === "workflow"
+      ? '<span class="task-kind">workflow</span>'
+      : '<span class="task-kind">generation</span>';
+    const date = task.created_at ? new Date(task.created_at * 1000).toLocaleString() : "";
+    let actions = "";
+    if (task.kind === "generation") {
+      if (!["completed", "failed", "cancelled"].includes(status)) {
+        actions += '<button class="cancel-job" data-cancel="' + S_("task", task.id) + '">Cancel</button>';
+      } else if (status !== "cancelled") {
+        actions += '<button class="cancel-job" data-repeat="' + S_("task", task.id) + '">Repeat</button>';
+      }
+    } else {
+      if (!["completed", "failed", "cancelled"].includes(status)) {
+        actions += '<button class="cancel-job" data-cancel-run="' + S_("task", task.id) + '">Cancel</button>';
+      }
+      if (task.has_graph && status !== "running") {
+        actions += '<button class="cancel-job" data-open-graph="' + S_("task", task.id) + '">Open workflow</button>';
+      }
+    }
+    const files = (task.outputs || []).slice(0, 3);
+    const filesHtml = files.length
+      ? '<div class="queue-files"><button class="queue-file" data-open-media="' + S_("task", task.id) + '">View ' + files.length +
+        ' result(s) in the Media Center</button></div>' : "";
+    return '<article class="queue-card" data-task="' + S_("task", task.id) + '"><div class="queue-card-top"><span class="queue-card-title">' +
+      kindBadge + " " + esc(task.name || "") +
+      (date ? ' <small class="queue-date">' + esc(date) + "</small>" : "") +
+      '</span><span class="queue-state' + cls + '">' + esc(status) + '</span></div><div class="queue-card-message">' +
+      esc(task.message || "") + '</div><div class="queue-progress"><span style="width:' +
+      Math.max(0, Math.min(100, Number(task.progress) || 0)) + '%"></span></div>' + filesHtml + actions + '</article>';
+  }
+
+  // registry id -> task record, so action handlers can reach the graph
+  state.tasks = new Map();
+
+  function renderTasks() {
+    const records = Array.from(state.tasks.values());
+    const active = records.filter((task) => !["completed", "failed", "cancelled"].includes(String(task.status || "queued"))).length;
+    const badge = $("queue-nav-count");
+    badge.textContent = String(active);
+    badge.hidden = active === 0;
+    if (!records.length) {
+      $("queue-view-list").innerHTML = '<div class="queue-empty">No tasks yet. Run a model in Generate or a workflow on the canvas to see progress here.</div>';
+      return;
+    }
+    $("queue-view-list").innerHTML = records.map(taskCard).join("");
+    $("queue-view-list").querySelectorAll("[data-cancel]").forEach((button) => button.addEventListener("click", () => cancelJob(button.dataset.cancel)));
+    $("queue-view-list").querySelectorAll("[data-repeat]").forEach((button) => button.addEventListener("click", () => repeatJob(button.dataset.repeat)));
+    $("queue-view-list").querySelectorAll("[data-cancel-run]").forEach((button) => button.addEventListener("click", async () => {
+      try {
+        await api("api/workflow/runs/" + encodeURIComponent(button.dataset.cancelRun) + "/cancel", { method: "POST" });
+        toast("Cancellation requested.");
+      } catch (error) { toast(error.message, true); }
+      window.setTimeout(refreshTasks, 600);
+    }));
+    $("queue-view-list").querySelectorAll("[data-open-graph]").forEach((button) => button.addEventListener("click", () => {
+      const task = state.tasks.get(button.dataset.openGraph);
+      if (!task || !task.graph || !window.WanGPStudioCanvas) return;
+      setView("workflow");
+      window.WanGPStudioCanvas.loadGraphIntoCanvas(task.graph);
+    }));
+    $("queue-view-list").querySelectorAll("[data-open-media]").forEach((button) => button.addEventListener("click", () => {
+      const task = state.tasks.get(button.dataset.openMedia);
+      window.WanGPStudioGallery.openResults(task ? task.outputs : []);
+    }));
+  }
+
+  async function refreshTasks() {
+    try {
+      const tasks = await api("api/tasks");
+      state.tasks.clear();
+      tasks.forEach((task) => state.tasks.set(task.id, task));
+      renderTasks();
+    } catch (error) {
+      console.warn("task registry unavailable:", error && error.message);
+    }
+  }
+
   function renderJobs() {
     const records = Array.from(state.jobs.values()).sort((a, b) => b.created_at - a.created_at);
     $("queue-count").textContent = String(records.length);
@@ -384,14 +475,12 @@
     badge.hidden = active === 0;
     if (!records.length) {
       $("queue-list").innerHTML = '<div class="queue-empty">No Studio jobs yet. Run a model to see execution progress here.</div>';
-      $("queue-view-list").innerHTML = '<div class="queue-empty">No Studio jobs yet. Run a model or workflow to see execution progress here.</div>';
       return;
     }
     $("queue-list").innerHTML = records.slice(0, 20).map(jobCard).join("");
     bindJobActions($("queue-list"));
-    // the Queue page shows the full history, not just the drawer window
-    $("queue-view-list").innerHTML = records.map(jobCard).join("");
-    bindJobActions($("queue-view-list"));
+    // the Queue PAGE is owned by the unified registry (renderTasks, /api/tasks):
+    // it shows generation jobs AND workflow runs; the drawer stays jobs-only
   }
 
   async function refreshJobs() {
@@ -572,7 +661,7 @@
       const open = document.body.classList.toggle("inspector-open");
       $("inspector-toggle").setAttribute("aria-pressed", open ? "true" : "false");
     });
-    $("queue-refresh").addEventListener("click", refreshJobs);
+    $("queue-refresh").addEventListener("click", refreshTasks);
     $("drawer-toggle").addEventListener("click", () => {
       const drawer = $("execution-drawer");
       const collapsed = drawer.classList.toggle("collapsed");
@@ -628,6 +717,7 @@
     selectModel: (modelType) => selectModel(modelType),
     getView: () => state.view,
     getModels: () => state.models.slice(),
+    reloadModels: () => loadModels(),
     modelCategory: category,
     modelAvailability: availabilityStatus
   };
@@ -638,7 +728,9 @@
     if (view) setView(view);
     await loadModels();
     await refreshJobs();
+    await refreshTasks();
     window.setInterval(refreshJobs, 5000);
+    window.setInterval(refreshTasks, 5000);
     window.setInterval(probeHealth, 30000);
   }
   init();

@@ -1,7 +1,7 @@
 {
   "name": "WanGP Studio",
   "author": "HateTM",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Lightweight full-screen workspace for WanGP model discovery and generation.",
   "date": "2026-11-07",
   "wan2gp_version": "18.84",

@@ -897,12 +897,50 @@
       render();
       renderEmpty();
     }
+    consumePendingResults();
+  }
+
+  // V4.5 audit P2: "View N result(s)" from the Queue must land on the actual
+  // results, not just the library top. The task's output basenames are staged
+  // before navigation; once cards render, the first match opens the lightbox.
+  function consumePendingResults() {
+    let pending;
+    try { pending = JSON.parse(window.sessionStorage.getItem("studioPendingResults") || "null"); }
+    catch (_) { pending = null; }
+    if (!pending || !Array.isArray(pending.names) || !pending.names.length) return;
+    const target = pending.names[0];
+    const host = $("gallery-window");
+    const cards = Array.from(host.querySelectorAll(".media-card"));
+    const match = cards.find((card) => card.textContent.includes(target));
+    if (!match) return;  // results not rendered yet (different page): stays staged
+    window.sessionStorage.removeItem("studioPendingResults");
+    match.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   }
 
   bind();
+  function openResults(outputs) {
+    const names = (outputs || [])
+      .map((path) => String(path || "").split(/[\/]/).pop())
+      .filter(Boolean);
+    window.sessionStorage.setItem("studioPendingResults", JSON.stringify({ names }));
+    window.WanGPStudio.setView("gallery");
+    // the first page may still be loading: retry until a match opens or the
+    // bounded budget runs out
+    consumePendingResults();
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      attempts += 1;
+      consumePendingResults();
+      if (attempts >= 20 || !window.sessionStorage.getItem("studioPendingResults")) {
+        window.clearInterval(timer);
+      }
+    }, 300);
+  }
+
   window.WanGPStudioGallery = {
     activate,
     reload: () => load(true),
+    openResults,
     // Small introspection surface for the e2e suite: the memory bounds of the
     // page store are a test contract, not an implementation accident.
     debug: () => ({

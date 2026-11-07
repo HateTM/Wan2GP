@@ -166,6 +166,7 @@ class WorkflowCompat:
         output_root: str | Path | None = None,
         enabled_provider: Callable[[], bool] | None = None,
         min_version: str = "0.0.0",
+        run_finished_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.host = host
         self.plugins_root = Path(plugins_root) if plugins_root else Path(__file__).resolve().parents[1]
@@ -181,6 +182,7 @@ class WorkflowCompat:
         self._run_order: list[str] = []
         self._output_root = Path(output_root) if output_root else self.plugin_dir / "workflow_outputs"
         self._meta_cache: dict[str, Any] | None = None
+        self._run_finished_callback = run_finished_callback
 
     # -- discovery -----------------------------------------------------
     @staticmethod
@@ -800,11 +802,18 @@ class WorkflowCompat:
                 "outputs": [],
                 "variables": {},
                 "errors": [],
+                # set the moment a generation node enters "running" (see
+                # node_event below): terminal node states are "error"/
+                # "cancelled" by the time the finally block runs, so the
+                # release decision must not depend on them
+                "generation_started": False,
                 "cancel_requested": False,
                 "created_at": time.time(),
                 "updated_at": time.time(),
                 "events": deque(maxlen=400),
                 "next_event": 1,
+                "graph_name": str(normalized.get("name") or "Workflow"),
+                "graph": normalized,
             }
             self._runs[run_id] = record
             self._run_order.append(run_id)
@@ -838,6 +847,10 @@ class WorkflowCompat:
 
             def node_event(node_id: str, state: str, result: Any) -> None:
                 record["nodes"][node_id] = state
+                if state == "running" and str(graph_types.get(node_id, "")).startswith(
+                    ("generate", "edit_", "inpaint_")
+                ):
+                    record["generation_started"] = True
                 self._emit(record, "node", {"node_id": node_id, "state": state})
 
             outputs, variables = runner.run_graph(
@@ -881,19 +894,19 @@ class WorkflowCompat:
             try:
                 # A failed or cancelled generation run must not leave a stale
                 # model in VRAM; a completed run honors the graph's unload
-                # flags. A release never fires while another workflow is still
+                # flags. The fact that a generation actually started is
+                # recorded by node_callback the moment the node entered
+                # "running" - by the time the worker reaches this block the
+                # node's terminal state is "error"/"cancelled"/"done", so the
+                # decision cannot be derived from record["nodes"] anymore.
+                # A release never fires while another workflow is still
                 # running, so it cannot interfere with concurrent work.
-                generation_ran = any(
-                    str(graph_types.get(node_id, "")).startswith(("generate", "edit_", "inpaint_"))
-                    and node_state in ("running", "done")
-                    for node_id, node_state in record["nodes"].items()
-                )
                 others_active = any(
                     other is not record and other.get("status") == "running"
                     for other in self._runs.values()
                 )
                 if not others_active:
-                    if record["status"] in ("failed", "cancelled") and generation_ran:
+                    if record["status"] in ("failed", "cancelled") and record.get("generation_started"):
                         always = getattr(runner, "release_loaded_model", None)
                         if callable(always):
                             always(self.host)
@@ -901,6 +914,11 @@ class WorkflowCompat:
                         honoring_release(self.host, graph)
             except Exception as exc:
                 logger.warning("model release failed for run %s: %s", record["id"], exc)
+            if self._run_finished_callback is not None:
+                try:
+                    self._run_finished_callback(self.compact_run(record))
+                except Exception as exc:
+                    logger.warning("run history persist failed for %s: %s", record["id"], exc)
             self._emit(record, "closed", {"run_id": record["id"]})
 
     def _write_output_sidecar(self, path: str | Path, run_id: str, graph_name: str, graph: dict[str, Any] | None = None) -> None:
@@ -1018,6 +1036,36 @@ class WorkflowCompat:
             snapshot = self.snapshot(run_id)
             if snapshot is not None:
                 runs.append(snapshot)
+        return runs
+
+    def compact_run(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Bounded projection for the unified task registry and persistence:
+        everything the Queue needs, nothing the browser does not."""
+        return {
+            "id": record["id"],
+            "kind": "workflow",
+            "status": record["status"],
+            "name": record.get("graph_name") or "Workflow",
+            "progress": record.get("progress", 0),
+            "message": record.get("message", ""),
+            "outputs": list(record.get("outputs") or []),
+            "errors": list(record.get("errors") or [])[-3:],
+            "generation_started": bool(record.get("generation_started")),
+            "created_at": record.get("created_at", 0),
+            "updated_at": record.get("updated_at", 0),
+            "graph": record.get("graph") or None,
+        }
+
+    def all_runs(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Compact records of every in-memory run, newest first (the unified
+        /api/tasks registry merges these with the persisted history)."""
+        with self._lock:
+            ids = self._run_order[-max(1, int(limit)):]
+        runs = []
+        for run_id in reversed(ids):
+            record = self._runs.get(run_id)
+            if record is not None:
+                runs.append(self.compact_run(record))
         return runs
 
     def cancel(self, run_id: str) -> bool:

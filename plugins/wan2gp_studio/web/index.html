@@ -55,7 +55,7 @@
   <main class="main-area">
     <header class="topbar">
       <div class="breadcrumbs"><span>Workspace</span><span class="crumb-sep">/</span><strong id="breadcrumb-current">Workflow</strong></div>
-      <div class="top-actions"><span class="runtime-pill" id="runtime-pill"><i></i> <span id="runtime-pill-text">WanGP runtime</span></span><button class="icon-button" id="refresh-models" title="Refresh model catalog">↻</button><span class="user-button">1.6.0</span></div>
+      <div class="top-actions"><span class="runtime-pill" id="runtime-pill"><i></i> <span id="runtime-pill-text">WanGP runtime</span></span><button class="icon-button" id="refresh-models" title="Refresh model catalog">↻</button><span class="user-button">1.6.1</span></div>
     </header>
 
     <section class="workspace">
@@ -317,6 +317,16 @@
                 <div class="section-title"><span>PRESETS &amp; PROFILES</span><span id="generate-preset-count"></span></div>
                 <div class="preset-row"><select id="generate-preset" class="preset-select" disabled><option>No presets available</option></select><button class="button button-quiet preset-load" id="generate-load-preset" disabled>Load</button></div>
               </div>
+              <div class="inspector-section" id="generate-advanced" hidden>
+                <div class="section-title"><span>ADVANCED ATTACHMENTS</span><button id="generate-advanced-clear" hidden title="Remove this attachment">✕</button></div>
+                <div class="input-slot">
+                  <select id="generate-advanced-key" class="preset-select" aria-label="Attachment key"></select>
+                  <button class="button button-quiet" id="generate-advanced-pick">Pick file</button>
+                  <span class="input-slot-value" id="generate-advanced-value">not set</span>
+                  <input type="file" id="generate-advanced-file" hidden>
+                </div>
+                <p class="field-note">Any native WanGP attachment key (image_start, image_refs, video_mask, custom_guide, …). The file is uploaded to the WanGP outputs and its path is written into the settings JSON.</p>
+              </div>
               <div class="settings-toolbar"><span>Full WanGP settings JSON</span><button id="generate-format-json">Format</button></div>
               <textarea id="generate-settings-json" class="json-editor" spellcheck="false" rows="12"></textarea>
               <p class="field-note">Advanced parameters are preserved. Edit the JSON for model-specific options; unknown fields are passed through untouched.</p>
@@ -365,7 +375,7 @@
       <div class="queue-heading"><div class="queue-title"><span class="panel-kicker">EXECUTION</span><h2>Studio tasks <span id="queue-count">0</span></h2></div><div class="queue-actions"><span class="queue-runtime"><i></i> Submitted to native queue</span><button class="small-tool" id="drawer-toggle" title="Collapse or expand the execution drawer" aria-expanded="true">▴</button><button class="small-tool" id="refresh-queue">↻</button></div></div>
       <div class="queue-list" id="queue-list"><div class="queue-empty">No Studio jobs yet. Run a model to see execution progress here.</div></div>
     </section>
-    <footer class="main-footer"><span>WanGP Studio <b>1.6.0</b> · Powered by WanGP</span><span id="api-status">Connecting to local runtime…</span></footer>
+    <footer class="main-footer"><span>WanGP Studio <b>1.6.1</b> · Powered by WanGP</span><span id="api-status">Connecting to local runtime…</span></footer>
   </main>
 </div>
 

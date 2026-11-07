@@ -5,6 +5,7 @@ The e2e harness has no live WanGP model registry (/api/models reports an
 error there on purpose), so Generate is asserted down to its honest
 empty/error state rather than a full submission.
 """
+import pytest
 
 
 def _set_view(page, view):
@@ -53,8 +54,12 @@ def test_queue_view_lists_jobs_and_updates_badge(page):
     # Queue page must render EITHER those cards OR the honest empty state
     _set_view(page, "queue")
     page.wait_for_selector("#queue-view:not([hidden])", timeout=5000)
+    # wait for the REGISTRY render (not the static pre-init markup): after
+    # renderTasks the list holds cards or the registry's own empty state
     page.wait_for_function(
-        "() => document.getElementById('queue-view-list').children.length > 0", timeout=20000
+        "() => { const l = document.getElementById('queue-view-list');"
+        " return l.children.length > 0 && !l.textContent.includes('No Studio jobs yet'); }",
+        timeout=20000,
     )
     cards = page.locator("#queue-view-list .queue-card").count()
     assert cards > 0 or page.locator("#queue-view-list .queue-empty").count() == 1
@@ -171,3 +176,90 @@ def test_generate_input_slots_render_from_metadata(page):
     assert slots.count() == 1  # only media roles render, text does not
     assert "image_guide" in page.text_content("#generate-input-slots")
     assert "seed.png" in page.text_content("#generate-input-slots")
+
+
+@pytest.mark.parametrize("width,height", [(1024, 800), (768, 900), (390, 844)])
+def test_inspector_is_reachable_on_small_screens(page, width, height):
+    """Audit P1: at <=1439 the inspector is a drawer and at <=1024 it stacks
+    below the canvas - but the pane toggles must stay usable at every width,
+    otherwise the inspector is unreachable."""
+    page.set_viewport_size({"width": width, "height": height})
+    page.evaluate("window.WanGPStudio.setView('workflow')")
+    page.wait_for_selector("#workflow-canvas-host", timeout=10000)
+    assert page.locator("#inspector-toggle").is_visible(), f"toggle hidden at {width}px"
+    assert page.locator("#library-toggle").is_visible(), f"library toggle hidden at {width}px"
+    # inspector starts closed on narrow screens and opens via the toggle
+    page.wait_for_timeout(300)
+    panel = page.locator(".inspector-panel")
+    initially_visible = panel.is_visible()
+    page.click("#inspector-toggle")
+    page.wait_for_timeout(300)
+    assert panel.is_visible(), f"inspector did not open at {width}px"
+    page.click("#inspector-toggle")
+    page.wait_for_timeout(300)
+    if not initially_visible:
+        assert not panel.is_visible(), f"inspector did not close at {width}px"
+
+
+def test_queue_view_shows_workflow_runs_in_unified_registry(page):
+    """Audit P1: the Queue must show BOTH task kinds. A run that fails fast
+    (missing input file) still enters the registry with its graph."""
+    import json as _json
+    import time as _time
+    import urllib.request
+
+    origin = page.url.split("#")[0].rstrip("/") + "/"
+    graph = {"name": "E2E registry", "nodes": [
+        {"id": "n1", "type": "input_video", "params": {"path": "Z:/definitely-missing.mp4"}, "enabled": True}],
+        "edges": []}
+    request = urllib.request.Request(
+        origin + "api/workflow/runs", data=_json.dumps({"graph": graph, "inputs": []}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            run_id = _json.loads(response.read())["run_id"]
+    except Exception:
+        pytest.skip("workflow runner unavailable in this environment")
+    deadline = _time.time() + 30
+    while _time.time() < deadline:
+        with urllib.request.urlopen(origin + "api/tasks", timeout=15) as response:
+            tasks = _json.loads(response.read())
+        entry = next((task for task in tasks if task["id"] == run_id), None)
+        if entry is not None and entry["status"] != "running":
+            break
+        _time.sleep(0.5)
+    assert entry is not None, "workflow run never reached the unified registry"
+    assert entry["kind"] == "workflow"
+    assert entry["has_graph"] is True
+    page.evaluate("window.WanGPStudio.setView('queue')")
+    page.wait_for_function(
+        "(runId) => Array.from(document.querySelectorAll('#queue-view-list .queue-card'))"
+        ".some((card) => card.textContent.includes('E2E registry'))",
+        arg=run_id, timeout=20000,
+    )
+    assert page.locator("#queue-view-list .task-kind").count() >= 1
+
+
+def test_inspector_resets_state_for_plain_nodes(page):
+    """Audit P2: after a generation node, selecting a plain node must forget
+    the model (Run disabled) and never carry the stale prompt."""
+    page.evaluate("window.WanGPStudio.setView('workflow')")
+    page.wait_for_selector("#workflow-canvas-host", timeout=10000)
+    # simulate what the canvas bridge delivers: first a model node, then a plain one
+    page.evaluate(
+        "window.WanGPStudio.selectModel('stub-model-for-inspector').catch(() => {})"
+    )
+    page.wait_for_timeout(400)
+    page.evaluate(
+        "window.WanGPStudio.onNodeSelected({ id: 'plain1', type: 'input_image', title: 'Input Image', params: { path: 'C:/x/a.png' } })"
+    )
+    page.wait_for_timeout(200)
+    assert page.locator("#run-from-inspector[disabled]").count() == 1
+    assert page.text_content("#prompt-input") == ""
+    # an empty prompt on the node restores as empty (not the previous text)
+    page.evaluate(
+        "window.WanGPStudio.onNodeSelected({ id: 'm1', type: 'generate_video', title: 'Generate', params: { model_type: 'stub-model-for-inspector', prompt: '' } })"
+    )
+    page.wait_for_timeout(600)
+    assert page.text_content("#prompt-input") == ""

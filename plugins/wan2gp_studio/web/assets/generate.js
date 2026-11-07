@@ -158,6 +158,7 @@
       $("generate-settings-json").value = JSON.stringify(settings, null, 2);
       renderPresets(detail);
       renderInputSlots(detail);
+      renderAdvancedAttachments();
       $("generate-state").textContent = "Native WanGP defaults loaded";
       $("generate-submit").disabled = false;
     } catch (error) {
@@ -242,6 +243,78 @@
       } catch (error) { S.toast(error.message, true); }
     });
   }
+
+  // V4.5 audit: the three role slots cover image/video/audio inputs; every
+  // other native WanGP attachment key stays reachable visually (the JSON
+  // editor remains the source of truth).
+  const ADVANCED_KEYS = [
+    "image_start", "image_end", "image_refs", "image_mask",
+    "video_guide2", "video_guide3", "video_mask",
+    "audio_guide2", "audio_guide3", "custom_guide"
+  ];
+
+  function currentSettings() {
+    try { return JSON.parse($("generate-settings-json").value || "{}") || {}; }
+    catch (_) { return {}; }
+  }
+
+  function updateAdvancedValue() {
+    const key = $("generate-advanced-key").value;
+    const value = currentSettings()[key];
+    $("generate-advanced-value").textContent = value ? String(value).split(/[\/]/).pop() : "not set";
+    $("generate-advanced-clear").hidden = !value;
+  }
+
+  function renderAdvancedAttachments() {
+    const section = $("generate-advanced");
+    section.hidden = false;
+    $("generate-advanced-key").innerHTML = ADVANCED_KEYS.map((key) =>
+      '<option value="' + key + '">' + key + "</option>").join("");
+    updateAdvancedValue();
+  }
+
+  async function uploadToKey(file) {
+    $("generate-state").textContent = "Uploading " + file.name + "…";
+    const form = new FormData();
+    form.append("file", file);
+    const response = await fetch("api/media/upload", { method: "POST", body: form, credentials: "same-origin" });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.detail || "Upload failed (" + response.status + ")");
+    const path = body.item && body.item.path;
+    if (!path) throw new Error("Upload did not return a file path");
+    return path;
+  }
+
+  function bindAdvancedAttachments() {
+    $("generate-advanced-key").addEventListener("change", updateAdvancedValue);
+    $("generate-advanced-pick").addEventListener("click", () => $("generate-advanced-file").click());
+    $("generate-advanced-file").addEventListener("change", async () => {
+      const file = $("generate-advanced-file").files && $("generate-advanced-file").files[0];
+      if (!file) return;
+      try {
+        const path = await uploadToKey(file);
+        const settings = currentSettings();
+        settings[$("generate-advanced-key").value] = path;
+        $("generate-settings-json").value = JSON.stringify(settings, null, 2);
+        updateAdvancedValue();
+        $("generate-state").textContent = "Input attached · edits are local until submitted";
+      } catch (error) {
+        $("generate-state").textContent = "Upload failed";
+        S.toast(error.message, true);
+      } finally {
+        $("generate-advanced-file").value = "";
+      }
+    });
+    $("generate-advanced-clear").addEventListener("click", () => {
+      const settings = currentSettings();
+      delete settings[$("generate-advanced-key").value];
+      $("generate-settings-json").value = JSON.stringify(settings, null, 2);
+      updateAdvancedValue();
+      $("generate-state").textContent = "Unsaved edits";
+    });
+  }
+
+  bindAdvancedAttachments();
 
   window.WanGPStudioGenerate = {
     activate,

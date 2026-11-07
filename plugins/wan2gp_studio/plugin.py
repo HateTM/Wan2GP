@@ -531,9 +531,17 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         # import chain takes ~20 s, and the first gallery view fires two dozen
         # thumbnail requests at once - without the warm-up they would all sit
         # on the import lock and occupy every threadpool thread.
+        def _warm_thumbnails() -> None:
+            # the warm-up is best-effort: a module stubbed out (tests) or a
+            # broken optional dependency must not surface as an unhandled
+            # thread exception
+            try:
+                importlib.import_module("shared.deepy.thumbnails")
+            except Exception:
+                pass
+
         threading.Thread(
-            target=importlib.import_module,
-            args=("shared.deepy.thumbnails",),
+            target=_warm_thumbnails,
             name="studio-thumbnail-warmup",
             daemon=True,
         ).start()
@@ -904,6 +912,9 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             plugins_root=os.environ.get("STUDIO_PLUGINS_ROOT") or None,
             enabled_provider=self._wanflow_enabled,
             min_version="0.1.0",
+            # V4.5 audit: terminal runs join the persisted task registry so
+            # the Queue survives restarts like the generation jobs do
+            run_finished_callback=lambda record: _persist_finished_run(record),
         )
         telemetry = Telemetry(
             jobs_provider=lambda: [record.snapshot() for record in list(jobs.values())],
@@ -1209,6 +1220,92 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             def snapshot(self) -> dict[str, Any]:
                 return self._snapshot
 
+        def _runs_history_path() -> Path:
+            config = self.server_config if isinstance(self.server_config, dict) else {}
+            workspaces = config.get("workspaces_dir") or str(Path(__file__).resolve().parents[2] / "workspaces")
+            return Path(workspaces) / "studio_runs.json"
+
+        _runs_history_lock = threading.Lock()
+
+        def _persist_finished_run(record: dict[str, Any]) -> None:
+            """V4.5 audit P1: terminal workflow runs survive host restarts
+            (bounded to 50, atomic write, same merge-by-id strategy as the
+            generation job history)."""
+            with _runs_history_lock:
+                try:
+                    try:
+                        disk = json.loads(_runs_history_path().read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        disk = []
+                    by_id = {item.get("id"): item for item in disk if isinstance(item, dict)}
+                    by_id[record["id"]] = record
+                    merged = sorted(by_id.values(), key=lambda item: item.get("created_at", 0), reverse=True)[:50]
+                    target = _runs_history_path()
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    tmp_file = target.with_suffix(".tmp")
+                    tmp_file.write_text(json.dumps(merged, ensure_ascii=False), encoding="utf-8")
+                    os.replace(tmp_file, target)
+                except Exception as exc:
+                    print(f"[Studio] run history persist failed: {exc}")
+
+        @app.get("/api/tasks")
+        def list_tasks():
+            """V4.5 audit P1: single registry for both task kinds - direct
+            generation jobs and workflow runs - with a common shape, so the
+            Queue page is one honest history instead of two silos."""
+            tasks: list[dict[str, Any]] = []
+            with _jobs_history_lock:
+                with jobs_lock:
+                    memory_jobs = {record.id: record.snapshot() for record in jobs.values()}
+                try:
+                    disk_jobs = json.loads(_jobs_history_path().read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    disk_jobs = []
+                seen: set[str] = set()
+                for snapshot in list(memory_jobs.values()) + [
+                    item for item in (disk_jobs if isinstance(disk_jobs, list) else [])
+                    if isinstance(item, dict) and item.get("id") not in memory_jobs
+                ]:
+                    seen.add(snapshot["id"])
+                    tasks.append({
+                        "id": snapshot.get("id"),
+                        "kind": "generation",
+                        "status": snapshot.get("status") or "queued",
+                        "name": snapshot.get("model_type") or "Generation",
+                        "progress": snapshot.get("progress", 0),
+                        "message": snapshot.get("message") or snapshot.get("prompt") or "",
+                        "outputs": snapshot.get("generated_files") or [],
+                        "errors": [],
+                        "created_at": snapshot.get("created_at", 0),
+                    })
+            with _runs_history_lock:
+                memory_runs = {run["id"]: run for run in workflow.all_runs()}
+                try:
+                    disk_runs = json.loads(_runs_history_path().read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    disk_runs = []
+                for item in (disk_runs if isinstance(disk_runs, list) else []):
+                    if isinstance(item, dict) and item.get("id") not in memory_runs:
+                        memory_runs[item["id"]] = item
+                for run in memory_runs.values():
+                    if run.get("id") in seen:
+                        continue
+                    tasks.append({
+                        "id": run.get("id"),
+                        "kind": "workflow",
+                        "status": run.get("status") or "running",
+                        "name": run.get("name") or "Workflow",
+                        "progress": run.get("progress", 0),
+                        "message": run.get("message") or "",
+                        "outputs": run.get("outputs") or [],
+                        "errors": run.get("errors") or [],
+                        "has_graph": bool(run.get("graph")),
+                        "graph": run.get("graph"),
+                        "created_at": run.get("created_at", 0),
+                    })
+            tasks.sort(key=lambda item: item.get("created_at", 0), reverse=True)
+            return tasks[:50]
+
         @app.get("/api/jobs")
         def list_jobs():
             with _jobs_history_lock:
@@ -1272,6 +1369,10 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                     record.message = str(exc)
                     record.updated_at = time.time()
                 record.emit("error", {"message": str(exc)})
+                # a synchronous submit failure is terminal too: without this
+                # the failed job never reaches the persisted history and
+                # vanishes from the Queue after a restart (audit P2)
+                _persist_finished_jobs()
                 raise
             with record._lock:
                 record.session_job = job
