@@ -1,6 +1,7 @@
 name: Studio tests
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "plugins/wan2gp_studio/**"

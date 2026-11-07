@@ -1,6 +1,7 @@
 name: Studio E2E
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "plugins/wan2gp_studio/**"
