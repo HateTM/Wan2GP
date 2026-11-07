@@ -163,7 +163,7 @@ def test_finished_jobs_persist_and_repeat_after_restart(tmp_path, monkeypatch):
         if client.get(f"/api/jobs/{job_id}").json().get("status") == "completed":
             break
         time.sleep(0.1)
-    history_path = workspaces / "studio_jobs.json"
+    history_path = workspaces / "studio" / "studio_jobs.json"
     assert history_path.is_file()
     assert any(item["id"] == job_id for item in json.loads(history_path.read_text(encoding="utf-8")))
 

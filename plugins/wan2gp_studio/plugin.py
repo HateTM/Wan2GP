@@ -1176,10 +1176,33 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 raise HTTPException(status_code=404, detail="Workflow run not found.")
             return {"run_id": run_id, "status": "cancellation_requested"}
 
-        def _jobs_history_path() -> Path:
+        def _studio_state_dir() -> Path:
+            """Studio history files must not sit directly in the workspaces
+            root: the Deepy WorkspaceStore treats every workspaces/*.json as
+            a workspace manifest and refuses to start otherwise (found the
+            hard way - a persisted studio_jobs.json crashed wgp.py in Safe
+            Mode). Everything lives in the studio subdirectory instead."""
             config = self.server_config if isinstance(self.server_config, dict) else {}
             workspaces = config.get("workspaces_dir") or str(Path(__file__).resolve().parents[2] / "workspaces")
-            return Path(workspaces) / "studio_jobs.json"
+            return Path(workspaces) / "studio"
+
+        def _migrate_legacy_history(name: str) -> None:
+            """1.5.0/1.6.0 wrote history next to the workspace manifests; move
+            those files into the studio subdirectory on first serve."""
+            config = self.server_config if isinstance(self.server_config, dict) else {}
+            workspaces = config.get("workspaces_dir") or str(Path(__file__).resolve().parents[2] / "workspaces")
+            legacy = Path(workspaces) / name
+            if not legacy.is_file():
+                return
+            target_dir = _studio_state_dir()
+            target_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                os.replace(legacy, target_dir / name)
+            except OSError:
+                pass  # a stale history file must not break serving
+
+        def _jobs_history_path() -> Path:
+            return _studio_state_dir() / "studio_jobs.json"
 
         _jobs_history_lock = threading.Lock()
 
@@ -1221,9 +1244,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 return self._snapshot
 
         def _runs_history_path() -> Path:
-            config = self.server_config if isinstance(self.server_config, dict) else {}
-            workspaces = config.get("workspaces_dir") or str(Path(__file__).resolve().parents[2] / "workspaces")
-            return Path(workspaces) / "studio_runs.json"
+            return _studio_state_dir() / "studio_runs.json"
 
         _runs_history_lock = threading.Lock()
 
@@ -1501,5 +1522,11 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
+
+        # history files moved out of the workspaces root (they are not Deepy
+        # workspace manifests - see _studio_state_dir); defined above, called
+        # here so every helper already exists
+        _migrate_legacy_history("studio_jobs.json")
+        _migrate_legacy_history("studio_runs.json")
 
         return app
