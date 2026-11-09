@@ -3,7 +3,7 @@
         "name": "Noct Q V4.0 Base (Uncensored Realism) INT8 + Texture-fix VAE",
         "architecture": "qwen_image_21_7B",
         "group": "qwen_image_2",
-        "description": "Noct Q V4.0 Base (CivitAI model 2958896, version 3372040) with the RedCraft texture-fix VAE (qwen_image_21_vae_texturefix_bf16.safetensors) instead of the official Qwen Image 2.1 VAE, aiming at cleaner texture detail. INT8 Comfy ConvRot checkpoint, native resolution up to 2048 px in multiples of 32, standard Qwen 2.1 text encoder (qwen3vl_8b_int8_convrot). Requires the texture-fix VAE in ckpts/qwen_image_21/ (available from the RedCraft vendor card); WanGP converts the vendor's native Wan-style tensor naming on the fly. Pick the base 'Noct Q V4.0 Base (Uncensored Realism) INT8' entry to use the official VAE.",
+        "description": "Noct Q V4.0 Base (CivitAI model 2958896, version 3372040) with the RedCraft texture-fix VAE (qwen_image_21_vae_texturefix_bf16.safetensors) instead of the official Qwen Image 2.1 VAE, aiming at cleaner texture detail. INT8 Comfy ConvRot checkpoint, native resolution up to 2048 px in multiples of 32, standard Qwen 2.1 text encoder (qwen3vl_8b_w4a8). Requires the texture-fix VAE in ckpts/qwen_image_21/ (available from the RedCraft vendor card); WanGP converts the vendor's native Wan-style tensor naming on the fly. Pick the base 'Noct Q V4.0 Base (Uncensored Realism) INT8' entry to use the official VAE.",
         "URLs": [
             "qwen_image_21/noctQ_V4_int8_convrot.safetensors"
         ],

@@ -3,7 +3,7 @@
         "name": "Noct Q V4.0 Base (Uncensored Realism) NVFP4 + Texture-fix VAE",
         "architecture": "qwen_image_21_7B",
         "group": "qwen_image_2",
-        "description": "Noct Q V4.0 Base (CivitAI model 2958896, version 3372040) in native ComfyUI TensorCore NVFP4, community quantization by sjoe1244 (huggingface.co/sjoe1244/Noct-Q-V4-Base-NVFP4): all 192 attention and image-MLP projections in NVFP4, remaining tensors BF16, no fine-tuning on top. Only 4.2 GB on disk. Requires Blackwell (RTX 50xx) with a native NVFP4 backend (Comfy Kitchen / lightx2v); the WanGP nvfp4 qtype is picked up automatically from the safetensors tensor layout. Uses the standard Qwen 2.1 text encoder (qwen3vl_8b_int8_convrot) and the RedCraft texture-fix VAE (qwen_image_21_vae_texturefix_bf16) for cleaner texture detail. Non-commercial, Qwen Research License.",
+        "description": "Noct Q V4.0 Base (CivitAI model 2958896, version 3372040) in native ComfyUI TensorCore NVFP4, community quantization by sjoe1244 (huggingface.co/sjoe1244/Noct-Q-V4-Base-NVFP4): all 192 attention and image-MLP projections in NVFP4, remaining tensors BF16, no fine-tuning on top. Only 4.2 GB on disk. Requires Blackwell (RTX 50xx) with a native NVFP4 backend (Comfy Kitchen / lightx2v); the WanGP nvfp4 qtype is picked up automatically from the safetensors tensor layout. Uses the standard Qwen 2.1 text encoder (qwen3vl_8b_w4a8) and the RedCraft texture-fix VAE (qwen_image_21_vae_texturefix_bf16) for cleaner texture detail. Non-commercial, Qwen Research License.",
         "URLs": [
             "https://huggingface.co/sjoe1244/Noct-Q-V4-Base-NVFP4/resolve/main/noct_q_v4_base_nvfp4.safetensors"
         ],

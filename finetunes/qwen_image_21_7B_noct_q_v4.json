@@ -3,7 +3,7 @@
         "name": "Noct Q V4.0 Base (Uncensored Realism) INT8",
         "architecture": "qwen_image_21_7B",
         "group": "qwen_image_2",
-        "description": "Noct Q - Uncensored Realism V4.0 Base (CivitAI model 2958896, version 3372040, fileId 3260131): Qwen Image 2.1 7B realism fine-tune, uncensored. INT8 Comfy ConvRot (same layout family as the RedCraft FixQW21T INT8), native resolution up to 2048 px in multiples of 32. Uses the standard Qwen 2.1 text encoder (qwen3vl_8b_int8_convrot) and VAE. File resolved locally from ckpts/qwen_image_21/noctQ_V4_int8_convrot.safetensors; if missing, grab it from the CivitAI card (downloads need a CivitAI account).",
+        "description": "Noct Q - Uncensored Realism V4.0 Base (CivitAI model 2958896, version 3372040, fileId 3260131): Qwen Image 2.1 7B realism fine-tune, uncensored. INT8 Comfy ConvRot (same layout family as the RedCraft FixQW21T INT8), native resolution up to 2048 px in multiples of 32. Uses the standard Qwen 2.1 text encoder (qwen3vl_8b_w4a8) and VAE. File resolved locally from ckpts/qwen_image_21/noctQ_V4_int8_convrot.safetensors; if missing, grab it from the CivitAI card (downloads need a CivitAI account).",
         "URLs": [
             "qwen_image_21/noctQ_V4_int8_convrot.safetensors"
         ],
