@@ -1,0 +1,36 @@
+name: Qwen Image 2.1 accelerator tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "models/qwen21/pipeline.py"
+      - "models/qwen21/qwen21_handler.py"
+      - "profiles/qwen21/**"
+      - "shared/deepy/settings/edit_image/**"
+      - "shared/deepy/settings/gen_image/**"
+      - "tests/test_qwen21_pruna_v02.py"
+      - ".github/workflows/qwen21-accelerator-tests.yml"
+  pull_request:
+    paths:
+      - "models/qwen21/pipeline.py"
+      - "models/qwen21/qwen21_handler.py"
+      - "profiles/qwen21/**"
+      - "shared/deepy/settings/edit_image/**"
+      - "shared/deepy/settings/gen_image/**"
+      - "tests/test_qwen21_pruna_v02.py"
+      - ".github/workflows/qwen21-accelerator-tests.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  qwen21-accelerator-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run Qwen Image 2.1 accelerator regression tests
+        run: python -m unittest discover -s tests -p 'test_qwen21_pruna_v02.py' -v
