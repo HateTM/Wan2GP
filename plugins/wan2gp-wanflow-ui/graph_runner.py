@@ -12,7 +12,7 @@ from postprocessing import catalog as postprocess_catalog
 from shared.settings_metadata import clean_metadata_settings
 from shared.utils import prompt_parser
 
-from . import ai_runtime, media_ops, preflight, run_cache, runtime_engine
+from . import ai_runtime, media_ops, preflight, prompt_engineer, run_cache, runtime_engine
 from .graph_model import GENERATION_NODE_TYPES, effective_edges, node_ports, topological_order, validate_graph
 
 
@@ -936,6 +936,26 @@ def run_graph(plugin, api_session, main_state: dict[str, Any], graph: dict[str, 
             answer = _runtime_ai().run_ai_analysis(getattr(plugin, "_deepy", None), main_state, params.get("model", 3), instruction, [path for path in images if path], params.get("max_tokens", 192), reset_prompt_enhancer=getattr(plugin, "reset_prompt_enhancer", None), reset_prompt_enhancer_if_requested=getattr(plugin, "reset_prompt_enhancer_if_requested", None))
             variables[str(params.get("output_name") or "analysis")] = answer
             result["text"] = answer
+        elif node_type == "prompt_engineer":
+            # Uses the native WanGP AI runtime; no second model server or GPU queue.
+            if release_models and loaded_model_type:
+                _release_loaded_model(plugin)
+                loaded_model_type = ""
+            images = [_first_path([item]) for item in inputs.get("images") or []]
+            images = [path for path in images if path]
+            idea = _substitute((inputs.get("idea") or [params.get("idea") or ""])[-1], variables)
+            instruction = prompt_engineer.build_instruction(idea, params.get("mode", "both"), bool(images))
+            if cancel_check and cancel_check():
+                raise InterruptedError("Workflow cancelled.")
+            answer = _runtime_ai().run_ai_analysis(
+                getattr(plugin, "_deepy", None), main_state, params.get("model", 3),
+                instruction, images, params.get("max_tokens", 768),
+                reset_prompt_enhancer=getattr(plugin, "reset_prompt_enhancer", None),
+                reset_prompt_enhancer_if_requested=getattr(plugin, "reset_prompt_enhancer_if_requested", None),
+            )
+            if cancel_check and cancel_check():
+                raise InterruptedError("Workflow cancelled.")
+            result.update(prompt_engineer.parse_response(answer, params.get("mode", "both")))
         elif node_type == "prompt_enhancer":
             if release_models and loaded_model_type:
                 _release_loaded_model(plugin)

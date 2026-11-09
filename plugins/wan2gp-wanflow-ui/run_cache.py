@@ -31,7 +31,7 @@ CACHE_MAX_AGE_SECONDS = 30 * 86400
 # Nodes whose result is expensive enough to checkpoint.
 GENERATION_TYPES = {"generate_image", "edit_image", "inpaint_image", "generate_video", "edit_video", "inpaint_video", "generate_audio"}
 DETERMINISTIC_MEDIA_TYPES = {"last_frame", "extract_frame", "image_sequence", "ffmpeg_trim", "ffmpeg_concat", "ffmpeg_mux_audio", "ffmpeg_remove_audio", "ffmpeg_resize", "ffmpeg_fps"}
-NONDETERMINISTIC_HEAVY_TYPES = {"prompt_enhancer", "ai_analyze", "magic_mask", "postprocess"}
+NONDETERMINISTIC_HEAVY_TYPES = {"prompt_enhancer", "prompt_engineer", "ai_analyze", "magic_mask", "postprocess"}
 HEAVY_TYPES = GENERATION_TYPES | DETERMINISTIC_MEDIA_TYPES | NONDETERMINISTIC_HEAVY_TYPES
 
 

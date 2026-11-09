@@ -32,6 +32,7 @@ STATIC_NODES = [
     ("inpaint_video", "Inpaint Video", "Generation", "Video generation with a mask."),
     ("generate_audio", "Generate Audio", "Generation", "Audio generation node."),
     ("ai_analyze", "AI Analyze", "AI", "Analyze connected images and emit text."),
+    ("prompt_engineer", "Prompt Engineer", "AI", "Create separate image and video prompts from an idea and optional reference images."),
     ("prompt_enhancer", "Prompt Enhancer", "AI", "Rewrite a prompt with Wan2GP's model-specific prompt enhancer."),
     ("resolution_config", "Resolution & Aspect", "Configuration", "Override resolution tier and aspect ratio for connected generation nodes."),
     ("lora_stack", "LoRA Stack", "Configuration", "Select multiple model-scoped LoRAs with an individual strength for each one."),
