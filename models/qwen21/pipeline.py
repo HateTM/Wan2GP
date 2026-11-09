@@ -32,6 +32,11 @@ PRUNA_SIGMAS = {
     5: (1.0, 0.94, 6 / 7, 2 / 3, 0.4),
     8: (1.0, 14 / 15, 6 / 7, 10 / 13, 2 / 3, 6 / 11, 0.4, 2 / 9),
 }
+# Pruna P-Q-Image-2.1 v0.2 uses the official unshifted six-step schedule.
+# Keep resolution-dependent dynamic shifting enabled; the scheduler appends sigma 0.
+PRUNA_V02_SIGMAS = {
+    6: (1.0, 0.925, 0.85, 0.625, 0.375, 0.125),
+}
 
 
 def reference_outpainting_offset(location, width, height):
@@ -307,19 +312,29 @@ class Qwen21Pipeline(QwenImage21Pipeline):
                 update_loras_slists(self.transformer, loras_slists, sampling_steps)
             viggle = sample_solver == "viggle_v02"
             pruna = sample_solver == "pruna"
+            pruna_v02 = sample_solver == "pruna_v02"
             turbo = sample_solver == "qwen21_turbo"
             if viggle and sampling_steps not in VIGGLE_SIGMAS:
                 raise ValueError("Viggle Turbo scheduler supports 4, 5 or 6 inference steps.")
             if pruna and sampling_steps not in PRUNA_SIGMAS:
-                raise ValueError("Pruna scheduler supports 5 or 8 inference steps.")
-            scheduler_overrides = ({"use_dynamic_shifting": False, "shift": 1.0, "shift_terminal": None} if pruna
-                                   else {"shift_terminal": None} if sampling_steps == 1 or viggle else {})
+                raise ValueError("Pruna v0.1 scheduler supports 5 or 8 inference steps.")
+            if pruna_v02 and sampling_steps not in PRUNA_V02_SIGMAS:
+                raise ValueError("Pruna v0.2 scheduler requires 6 inference steps.")
+            scheduler_overrides = (
+                {"use_dynamic_shifting": False, "shift": 1.0, "shift_terminal": None} if pruna
+                else {"use_dynamic_shifting": True, "shift_terminal": None} if pruna_v02
+                else {"shift_terminal": None} if sampling_steps == 1 or viggle else {}
+            )
             scheduler_class = QwenImage21TurboScheduler if turbo else FlowMatchEulerDiscreteScheduler
             scheduler = scheduler_class.from_config(
                 self.scheduler_config, **scheduler_overrides)
             cfg = scheduler.config
-            sigmas = (PRUNA_SIGMAS[sampling_steps] if pruna else VIGGLE_SIGMAS[sampling_steps] if viggle
-                      else np.linspace(1, 1 / sampling_steps, sampling_steps))
+            sigmas = (
+                PRUNA_SIGMAS[sampling_steps] if pruna
+                else PRUNA_V02_SIGMAS[sampling_steps] if pruna_v02
+                else VIGGLE_SIGMAS[sampling_steps] if viggle
+                else np.linspace(1, 1 / sampling_steps, sampling_steps)
+            )
             if turbo:
                 scheduler.set_timesteps(sampling_steps, device=device)
             elif cfg.use_dynamic_shifting:
@@ -331,7 +346,9 @@ class Qwen21Pipeline(QwenImage21Pipeline):
             if viggle:
                 print(f"Viggle Turbo Scheduler - Raw Sigmas: {list(sigmas)}; Applied Sigmas: {[round(value, 6) for value in scheduler.sigmas.tolist()]}; Terminal Shift: {scheduler.config.shift_terminal}")
             elif pruna:
-                print(f"Pruna Scheduler - Sigmas: {[round(value, 6) for value in scheduler.sigmas.tolist()]}; Dynamic Shift: {cfg.use_dynamic_shifting}; Shift: {cfg.shift}; Terminal Shift: {cfg.shift_terminal}")
+                print(f"Pruna v0.1 Scheduler - Sigmas: {[round(value, 6) for value in scheduler.sigmas.tolist()]}; Dynamic Shift: {cfg.use_dynamic_shifting}; Shift: {cfg.shift}; Terminal Shift: {cfg.shift_terminal}")
+            elif pruna_v02:
+                print(f"Pruna v0.2 Scheduler - Raw Sigmas: {list(sigmas)}; Applied Sigmas: {[round(value, 6) for value in scheduler.sigmas.tolist()]}; Dynamic Shift: {cfg.use_dynamic_shifting}; Shift: {cfg.shift}; Terminal Shift: {cfg.shift_terminal}")
             elif turbo:
                 print(f"Qwen Image 2.1 Turbo Scheduler - Sigmas: {[round(value, 6) for value in scheduler.sigmas.tolist()]}")
             first_step = 0
