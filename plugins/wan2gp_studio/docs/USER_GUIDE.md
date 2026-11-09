@@ -33,9 +33,9 @@ Deep links: `#dashboard`, `#workflow`, `#gallery`, `#resources`, `#settings`.
 ## Generate
 
 1. Pick a model in the **Models** panel (green dot = model files available locally; grey = missing, downloading happens on first run).
-2. Edit the prompt and the full settings JSON in the **Inspector**; load a native preset if the model ships one.
-3. Press **Run generation**. The task goes to the native WanGP queue; progress arrives over SSE; **Cancel** stops it.
-4. Results appear in the native output folders and in **Gallery** after a rescan.
+2. Add input media and edit the prompt in **Settings**. Load a native preset or edit the full settings JSON when needed.
+3. Press **Run generation**. Studio opens **Queue**, where you can follow progress or cancel the task.
+4. Open the task's results directly in **Media Center**. For a task with several results, use the selector in the preview.
 
 ## Gallery
 
@@ -57,8 +57,9 @@ If an installed plugin ships a `sendto.json` manifest (Image Suite does: *Img2Im
 ## Workflow
 
 - The canvas is the WanFlow UI editor served through Studio (`web/assets/canvas.*`, Apache-2.0, see attribution).
-- **Save** stores the graph as `wan2gp-wanflow-ui` JSON in the plugin's `workflows/` folder; the selector at the top lists saved and shipped examples.
+- **Save** and **Ctrl+S** store the current graph as `wan2gp-wanflow-ui` JSON in the plugin's `workflows/` folder. **Save as…** creates a separate graph, even when another graph has the same name. Use the selector to reopen it.
 - **Run** submits the graph to the native queue through Studio's facade; node states update over SSE; **Cancel** requests cancellation at the next node check.
+- The bottom panel shows active Studio tasks. **Open Queue** shows the history, where you can open or repeat a stored workflow run.
 - Reusable blocks: select a group and press *Save as reusable block* in the inspector; saved blocks appear in the canvas palette and can be inserted into other graphs. Deleting a block asks for a second click in the palette.
 - Execution requires the optional `wan2gp-wanflow-ui` plugin. Without it the view shows `not_installed` and everything else keeps working.
 - Import/export: `GET /studio/api/workflow/workflows/{id}/export` and `POST /studio/api/workflow/import`. Legacy `wan2gp-workflows-v2` (`stages`) files are migrated automatically with a warning. ComfyUI **API** graphs and ComfyUI **UI-format** graphs are imported as opaque `comfyui_node` nodes — layout, values and links preserved — and exported back in the same ComfyUI format. Neither is executable inside WanGP.

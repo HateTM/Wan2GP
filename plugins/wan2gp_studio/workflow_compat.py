@@ -311,9 +311,9 @@ class WorkflowCompat:
     def load(self, slug: str) -> dict[str, Any]:
         return self._graph_store().load(slug)
 
-    def save(self, graph: dict[str, Any], name: str | None = None) -> dict[str, Any]:
+    def save(self, graph: dict[str, Any], name: str | None = None, *, workflow_id: str | None = None) -> dict[str, Any]:
         title = name or str(graph.get("name") or "Workflow")
-        normalized, path = self._graph_store().save(graph, title)
+        normalized, path = self._graph_store().save(graph, title, workflow_id=workflow_id or uuid.uuid4().hex)
         return {"graph": normalized, "id": path.stem}
 
     def delete(self, slug: str) -> None:
@@ -814,6 +814,7 @@ class WorkflowCompat:
                 "next_event": 1,
                 "graph_name": str(normalized.get("name") or "Workflow"),
                 "graph": normalized,
+                "inputs": list(inputs or []),
             }
             self._runs[run_id] = record
             self._run_order.append(run_id)
@@ -1054,7 +1055,13 @@ class WorkflowCompat:
             "created_at": record.get("created_at", 0),
             "updated_at": record.get("updated_at", 0),
             "graph": record.get("graph") or None,
+            "inputs": list(record.get("inputs") or []),
         }
+
+    def run_record(self, run_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            record = self._runs.get(run_id)
+            return self.compact_run(record) if record else None
 
     def all_runs(self, limit: int = 50) -> list[dict[str, Any]]:
         """Compact records of every in-memory run, newest first (the unified

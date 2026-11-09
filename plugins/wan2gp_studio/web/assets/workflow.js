@@ -14,9 +14,11 @@
     slug: null,
     graph: null,
     frame: null,
+    frameReady: null,
     assets: null,
     runId: null,
     runRequestPending: false,
+    saving: false,
     submittingRun: false,
     events: null,
     nodeStates: {},
@@ -35,9 +37,10 @@
     return origin === "null" || origin === location.origin;
   }
 
-  function requestCanvasGraph(timeoutMs = 4000) {
+  function requestCanvasGraph(timeoutMs = 4000, update = null) {
     const frameWindow = state.frame && state.frame.contentWindow;
     if (!frameWindow) return Promise.resolve(null);
+    const frameReady = state.frameReady;
     const requestId = "graph-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
@@ -49,7 +52,11 @@
         pendingGraphRequests.delete(requestId);
         resolve(graph);
       });
-      frameWindow.postMessage({ type: "WAN2GP_WORKFLOWS_V2", action: "get_graph", request_id: requestId }, "*");
+      frameReady.then(() => {
+        if (state.frameReady === frameReady && pendingGraphRequests.has(requestId)) {
+          frameWindow.postMessage({ type: "WAN2GP_WORKFLOWS_V2", action: "get_graph", request_id: requestId, update }, "*");
+        }
+      });
     });
   }
 
@@ -63,14 +70,6 @@
     return btoa(binary);
   }
 
-  function slugify(value) {
-    return String(value || "workflow")
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 80) || "workflow";
-  }
-
   function setStatus(text) {
     state.status = text;
     const element = $("workflow-status");
@@ -78,7 +77,7 @@
   }
 
   function setBusy(busy) {
-    ["workflow-save", "workflow-run", "workflow-new"].forEach((id) => {
+    ["workflow-save", "workflow-save-copy", "run-generation", "workflow-new", "workflow-select", "workflow-template"].forEach((id) => {
       const button = $(id);
       if (button) button.disabled = busy;
     });
@@ -89,9 +88,9 @@
   async function loadAssets() {
     if (state.assets) return state.assets;
     const [html, css, js] = await Promise.all([
-      fetch("assets/canvas.html", { credentials: "same-origin" }).then((response) => response.text()),
-      fetch("assets/canvas.css", { credentials: "same-origin" }).then((response) => response.text()),
-      fetch("assets/canvas.js", { credentials: "same-origin" }).then((response) => response.text())
+      fetch("assets/canvas.html", { credentials: "same-origin", cache: "no-cache" }).then((response) => response.text()),
+      fetch("assets/canvas.css", { credentials: "same-origin", cache: "no-cache" }).then((response) => response.text()),
+      fetch("assets/canvas.js", { credentials: "same-origin", cache: "no-cache" }).then((response) => response.text())
     ]);
     state.assets = { html, css, js };
     return state.assets;
@@ -108,11 +107,23 @@
       .replace("/* WORKFLOWS_V2_STATUS */", state.status.replace(/[\r\n]+/g, " "))
       .replace("/* WORKFLOWS_V2_JS */", safeJs);
     const frame = $("workflow-frame");
+    S.onNodeSelected(null);
     frame.hidden = false;
-    frame.srcdoc = document_;
     state.frame = frame;
+    state.frameReady = new Promise((resolve) => frame.addEventListener("load", resolve, { once: true }));
+    frame.srcdoc = document_;
     $("workflow-unavailable").hidden = true;
+    if (!await requestCanvasGraph()) throw new Error("The workflow canvas did not initialize.");
     flushPendingMedia();
+  }
+
+  async function showGraph(graph) {
+    if (!state.frame) return buildFrame(graph);
+    await state.frameReady;
+    state.frame.contentWindow.postMessage({
+      type: "WAN2GP_WORKFLOWS_V2", action: "load_graph", graph
+    }, "*");
+    if (!await requestCanvasGraph()) throw new Error("The workflow canvas did not load the graph.");
   }
 
   function flushPendingMedia() {
@@ -182,10 +193,11 @@
       state.workflows = [];
     }
     const select = $("workflow-select");
-    select.innerHTML = state.workflows.map((item) =>
+    select.innerHTML = '<option value="">' + (state.workflows.length ? "Select saved workflow…" : "No saved workflows") + "</option>" +
+      state.workflows.map((item) =>
       '<option value="' + S.esc(item.id) + '">' + S.esc(item.name) + "</option>"
-    ).join("") || '<option value="">No saved workflows</option>';
-    if (selectSlug) select.value = selectSlug;
+    ).join("");
+    select.value = selectSlug || "";
     return state.workflows;
   }
 
@@ -195,11 +207,11 @@
     setBusy(true);
     try {
       const graph = await api("api/workflow/workflows/" + encodeURIComponent(slug));
+      await showGraph(graph);
       state.slug = slug;
-      state.graph = graph;
-      await buildFrame(graph);
       setStatus((graph.name || slug) + " · " + ((graph.nodes || []).length) + " nodes");
     } catch (error) {
+      $("workflow-select").value = state.slug || "";
       toast(error.message, true);
       setStatus("Could not load workflow");
     } finally {
@@ -221,48 +233,76 @@
 
   async function loadTemplate(id) {
     if (!id) return;
+    setBusy(true);
     try {
       const payload = await api("api/workflow/templates");
       const template = (payload.templates || []).find((item) => item.id === id);
       if (!template) return;
+      await showGraph(template.graph);
       state.slug = null;
-      state.graph = template.graph;
-      await buildFrame(template.graph);
       setStatus((template.name || "Template") + " loaded · " + ((template.graph.nodes || []).length) + " nodes");
       $("workflow-select").value = "";
     } catch (error) {
       toast(error.message, true);
+    } finally {
+      setBusy(false);
     }
   }
 
-  function newWorkflow() {
-    state.slug = null;
-    state.graph = { name: "Untitled workflow", nodes: [], edges: [], groups: [] };
-    buildFrame(state.graph).then(() => {
+  async function newWorkflow() {
+    setBusy(true);
+    try {
+      await showGraph({ name: "Untitled workflow", nodes: [], edges: [], groups: [] });
+      state.slug = null;
       setStatus("Untitled workflow · 0 nodes");
       $("workflow-select").value = "";
-    }).catch((error) => toast(error.message, true));
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      setBusy(false);
+    }
   }
 
-  async function saveGraph(graph, name) {
-    const title = String(name || (graph && graph.name) || "Untitled workflow").trim() || "Untitled workflow";
-    const slug = slugify(title);
-    setStatus("Saving workflow…");
+  function askWorkflowName(title) {
+    const dialog = $("workflow-name-dialog");
+    const input = $("workflow-name-input");
+    dialog.returnValue = "";
+    input.value = title;
+    dialog.showModal();
+    input.select();
+    return new Promise((resolve) => {
+      dialog.addEventListener("close", () => resolve(dialog.returnValue === "save" ? input.value : null), { once: true });
+    });
+  }
+
+  async function saveCurrent(asCopy = false) {
+    if (state.saving || $("workflow-save").disabled) return;
+    state.saving = true;
+    setBusy(true);
     try {
-      const saved = await api("api/workflow/workflows/" + encodeURIComponent(slug), {
-        method: "PUT",
-        body: JSON.stringify({ graph, name: title })
+      const graph = await requestCanvasGraph();
+      if (!graph) throw new Error("Could not read the current graph from the canvas.");
+      const id = asCopy ? null : state.slug;
+      const title = graph.name || "Untitled workflow";
+      const name = id ? title : await askWorkflowName(title);
+      if (name === null) return;
+      setStatus("Saving workflow…");
+      const saved = await api("api/workflow/workflows" + (id ? "/" + encodeURIComponent(id) : ""), {
+        method: id ? "PUT" : "POST",
+        body: JSON.stringify({ graph, name: name.trim() || title })
       });
-      state.slug = saved.id || slug;
+      state.slug = saved.id;
       state.graph = saved.graph || graph;
+      state.frame.contentWindow.postMessage({ type: "WAN2GP_WORKFLOWS_V2", action: "rename_graph", name: state.graph.name }, "*");
       await refreshWorkflowList(state.slug);
-      toast("Workflow saved: " + title);
-      setStatus(title + " · saved");
-      return saved;
+      toast("Workflow saved: " + state.graph.name);
+      setStatus(state.graph.name + " · saved");
     } catch (error) {
       toast(error.message, true);
       setStatus("Save failed");
-      throw error;
+    } finally {
+      state.saving = false;
+      setBusy(Boolean(state.runId || state.runRequestPending || state.submittingRun));
     }
   }
 
@@ -312,6 +352,7 @@
       });
       postNodeStatus();
       setStatus("Running workflow…");
+      S.refreshTasks();
       watchRun(state.runId);
     } catch (error) {
       toast(error.message, true);
@@ -456,25 +497,8 @@
         uploadDroppedFiles(event.dataTransfer.files);
       }
     });
-    $("workflow-save").addEventListener("click", async () => {
-      if (!state.graph) {
-        toast("Nothing to save yet.", true);
-        return;
-      }
-      setBusy(true);  // no re-click while the handshake is in flight
-      const graph = await requestCanvasGraph();
-      if (!graph) {
-        setBusy(false);
-        toast("Could not read the current graph from the canvas. Save aborted.", true);
-        setStatus("Save aborted");
-        return;
-      }
-      state.graph = graph;
-      saveGraph(graph, (graph && graph.name) || "Untitled workflow")
-        .catch(() => {})
-        .finally(() => setBusy(false));
-    });
-    $("workflow-run").addEventListener("click", runCurrent);
+    $("workflow-save").addEventListener("click", () => saveCurrent());
+    $("workflow-save-copy").addEventListener("click", () => saveCurrent(true));
     $("workflow-cancel").addEventListener("click", cancelRun);
     window.addEventListener("message", (event) => {
       const data = event && event.data;
@@ -491,20 +515,16 @@
       if (data.action === "graph") {
         const resolve = typeof data.request_id === "string" ? pendingGraphRequests.get(data.request_id) : null;
         if (!resolve) return;
-        if (typeof data.graph !== "object" || data.graph === null) return;
-        state.graph = data.graph;
+        if (typeof data.graph !== "object") return;
+        if (data.graph) state.graph = data.graph;
         resolve(data.graph);
         return;
       }
-      const allowed = ["save", "run", "save_block", "delete_block"];
+      const allowed = ["save", "save_block", "delete_block"];
       if (allowed.indexOf(data.action) === -1) return;
       if (data.graph !== undefined && (typeof data.graph !== "object" || data.graph === null)) return;
       if (data.action === "save") {
-        state.graph = data.graph || state.graph;
-        saveGraph(state.graph, (data.graph && data.graph.name) || "Untitled workflow").catch(() => {});
-      } else if (data.action === "run") {
-        state.graph = data.graph || state.graph;
-        startRun(state.graph);
+        saveCurrent();
       } else if (data.action === "save_block") {
         const graph = data.graph || state.graph || {};
         const groupId = (graph.ui || {}).selected_group_id || "";
@@ -540,6 +560,7 @@
     state.active = true;
     if (!state.started) {
       state.started = true;
+      setBusy(true);
       try {
         state.catalog = await api("api/workflow/catalog");
       loadTemplates().catch(() => {});
@@ -551,10 +572,9 @@
         // activate() races loadGraphIntoCanvas: "Open workflow" in the Gallery
         // fires setView and load in the same tick, so a pending graph must not
         // be overwritten by the empty template - build whichever is newer.
-        const pending = state.graph && Array.isArray(state.graph.nodes) && state.graph.nodes.length
-          ? state.graph
-          : { name: "Untitled workflow", nodes: [], edges: [], groups: [] };
+        const pending = state.graph || { name: "Untitled workflow", nodes: [], edges: [], groups: [] };
         await buildFrame(pending);
+        setBusy(false);
       } catch (error) {
         const host = $("workflow-unavailable");
         host.hidden = false;
@@ -565,7 +585,6 @@
         $("workflow-frame").hidden = true;
         setStatus("Workflow unavailable");
         setBusy(true);
-        ["workflow-save", "workflow-run", "workflow-cancel"].forEach((id) => { $(id).disabled = true; });
       }
     }
   }
@@ -594,40 +613,29 @@
     return true;
   }
 
-  function applyToSelectedNode(payload) {
-    const frameWindow = state.frame && state.frame.contentWindow;
-    if (!frameWindow) return false;
-    frameWindow.postMessage({
-      type: "WAN2GP_WORKFLOWS_V2",
-      action: "apply_node_settings",
-      settings: payload.settings || null,
-      prompt: typeof payload.prompt === "string" ? payload.prompt : null,
-      model_type: payload.model_type || null
-    }, "*");
-    return true;
+  async function applyToSelectedNode(payload) {
+    return Boolean(await requestCanvasGraph(4000, payload));
   }
 
   function loadGraphIntoCanvas(graph) {
-    if (!graph || !Array.isArray(graph.nodes)) return false;
-    if (state.frame && state.frame.contentWindow) {
-      state.frame.contentWindow.postMessage({
-        type: "WAN2GP_WORKFLOWS_V2",
-        action: "load_graph",
-        graph: graph
-      }, "*");
+    if (state.saving || !graph || !Array.isArray(graph.nodes)) return false;
+    state.slug = null;
+    $("workflow-select").value = "";
+    const label = (graph.name || "Workflow") + " · " + graph.nodes.length + " nodes";
+    if (state.frame) {
+      setBusy(true);
+      showGraph(graph).then(() => setStatus(label)).catch((error) => toast(error.message, true))
+        .finally(() => setBusy(Boolean(state.runId || state.runRequestPending || state.submittingRun)));
+    } else {
       state.graph = graph;
-      setStatus((graph.name || "Workflow") + " · " + graph.nodes.length + " nodes (from Gallery)");
-      return true;
     }
-    state.graph = graph;
-    buildFrame(graph).catch(() => {});
     return true;
   }
 
   bind();
   window.WanGPStudioCanvas = {
     activate,
-    saveGraph,
+    saveCurrent,
     startRun,
     runCurrent,
     newWorkflow,

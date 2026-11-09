@@ -31,7 +31,7 @@ class StubGraphStore:
     def choices(self):
         return []
 
-    def save(self, graph, name):
+    def save(self, graph, name, *, workflow_id=None):
         path = self.root / "saved.json"
         path.write_text(json.dumps(graph), encoding="utf-8")
         return graph, path

@@ -495,8 +495,10 @@
     toast("Opening WanGP to send this frame to " + label + "…");
   }
 
-  async function openLightbox(id) {
+  async function openLightbox(id, fromTask = false) {
     const dialog = $("lightbox");
+    const results = $("lightbox-task-results");
+    results.hidden = !fromTask || results.options.length < 2;
     state.detail = null;
     $("lightbox-stage").innerHTML = '<div class="lightbox-loading">Loading media…</div>';
     $("lightbox-name").textContent = "Loading…";
@@ -506,12 +508,17 @@
     $("lightbox-path").textContent = "";
     $("lightbox-download").setAttribute("href", "api/media/" + encodeURIComponent(id) + "/file");
     if (!dialog.open) dialog.showModal();
+    const request = Symbol();
+    state.lightboxRequest = request;
     try {
       const detail = await api("api/media/" + encodeURIComponent(id));
+      if (state.lightboxRequest !== request || !dialog.open) return;
       state.detail = detail;
       renderLightbox(detail);
     } catch (error) {
-      $("lightbox-stage").innerHTML = '<div class="lightbox-loading">' + esc(error.message) + "</div>";
+      if (state.lightboxRequest === request) {
+        $("lightbox-stage").innerHTML = '<div class="lightbox-loading">' + esc(error.message) + "</div>";
+      }
     }
   }
 
@@ -602,6 +609,8 @@
     const dialog = $("lightbox");
     if (dialog.open) dialog.close();
     state.detail = null;
+    state.lightboxRequest = null;
+    $("lightbox-stage").replaceChildren();
   }
 
   function useInWorkflow() {
@@ -848,6 +857,8 @@
       enqueueUploads(event.dataTransfer && event.dataTransfer.files);
     });
     $("lightbox-close").addEventListener("click", closeLightbox);
+    $("lightbox").addEventListener("cancel", closeLightbox);
+    $("lightbox-task-results").addEventListener("change", (event) => openLightbox(event.target.value, true));
     $("lightbox").addEventListener("click", (event) => {
       if (event.target === $("lightbox")) closeLightbox();
     });
@@ -897,44 +908,15 @@
       render();
       renderEmpty();
     }
-    consumePendingResults();
-  }
-
-  // V4.5 audit P2: "View N result(s)" from the Queue must land on the actual
-  // results, not just the library top. The task's output basenames are staged
-  // before navigation; once cards render, the first match opens the lightbox.
-  function consumePendingResults() {
-    let pending;
-    try { pending = JSON.parse(window.sessionStorage.getItem("studioPendingResults") || "null"); }
-    catch (_) { pending = null; }
-    if (!pending || !Array.isArray(pending.names) || !pending.names.length) return;
-    const target = pending.names[0];
-    const host = $("gallery-window");
-    const cards = Array.from(host.querySelectorAll(".media-card"));
-    const match = cards.find((card) => card.textContent.includes(target));
-    if (!match) return;  // results not rendered yet (different page): stays staged
-    window.sessionStorage.removeItem("studioPendingResults");
-    match.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   }
 
   bind();
   function openResults(outputs) {
-    const names = (outputs || [])
-      .map((path) => String(path || "").split(/[\/]/).pop())
-      .filter(Boolean);
-    window.sessionStorage.setItem("studioPendingResults", JSON.stringify({ names }));
-    window.WanGPStudio.setView("gallery");
-    // the first page may still be loading: retry until a match opens or the
-    // bounded budget runs out
-    consumePendingResults();
-    let attempts = 0;
-    const timer = window.setInterval(() => {
-      attempts += 1;
-      consumePendingResults();
-      if (attempts >= 20 || !window.sessionStorage.getItem("studioPendingResults")) {
-        window.clearInterval(timer);
-      }
-    }, 300);
+    if (!outputs.length) return;
+    const picker = $("lightbox-task-results");
+    picker.replaceChildren(...outputs.map((item, index) => new Option((index + 1) + ". " + item.name, item.id)));
+    S.setView("gallery");
+    openLightbox(picker.value, true);
   }
 
   window.WanGPStudioGallery = {

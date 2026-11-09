@@ -23,7 +23,7 @@ def _read(path):
 def test_index_references_only_existing_assets():
     html = _read(HTML)
     for match in re.findall(r'(?:src|href)="(assets/[^"]+|canvas\.html)"', html):
-        assert os.path.isfile(os.path.join(WEB, match)), f"missing asset: {match}"
+        assert os.path.isfile(os.path.join(WEB, match.partition("?")[0])), f"missing asset: {match}"
 
 
 def test_every_js_id_exists_in_html():
@@ -78,7 +78,7 @@ def test_studio_toolbar_requests_live_graph_from_canvas():
     canvas = _read(os.path.join(ASSETS, "canvas.js"))
     assert "requestCanvasGraph" in host
     assert 'action: "get_graph"' in host
-    assert "data.action==='get_graph'" in canvas
+    assert "data.action === 'get_graph'" in canvas
     assert "action:'graph'" in canvas
 
 
@@ -88,7 +88,7 @@ def test_canvas_accepts_host_media_additions():
     host = _read(os.path.join(ASSETS, "workflow.js"))
     canvas = _read(os.path.join(ASSETS, "canvas.js"))
     assert "addMediaInput" in host
-    assert "action==='add_media'" in canvas
+    assert "data.action === 'add_media'" in canvas
     assert "addMediaNode" in canvas
 
 
@@ -97,7 +97,7 @@ def test_canvas_messages_are_origin_checked():
     canvas = _read(os.path.join(ASSETS, "canvas.js"))
     assert "frameOriginAllowed" in host
     assert "event.origin" in host
-    assert "event.source!==window.parent" in canvas
+    assert "event.source !== window.parent" in canvas
 
 
 def test_version_strings_are_consistent():
@@ -123,15 +123,8 @@ def test_workflow_handlers_are_bound_once():
     workflow = _read(os.path.join(ASSETS, "workflow.js"))
     studio = _read(os.path.join(ASSETS, "studio.js"))
     assert len(re.findall(r"(?m)^  bind\(\);$", workflow)) == 1
-    # V4.5 audit: job actions are bound in exactly TWO scoped sites - the
-    # workflow drawer (bindJobActions over #queue-list) and the unified
-    # registry (renderTasks over #queue-view-list). Each render pass binds
-    # its own fresh container once; the same element is never bound twice.
-    assert studio.count('querySelectorAll("[data-cancel]")') == 2
-    assert studio.count('querySelectorAll("[data-repeat]")') == 2
-    assert studio.count('querySelectorAll("[data-open-gallery]")') == 1
-    assert studio.count("bindJobActions($(\"queue-list\"))") == 1
-    assert 'querySelectorAll("[data-open-graph]")' in studio
+    for element in ("queue-list", "queue-view-list"):
+        assert studio.count(f'$("{element}").addEventListener("click", handleTaskAction)') == 1
 
 
 def test_model_catalog_requests_complete_available_page():

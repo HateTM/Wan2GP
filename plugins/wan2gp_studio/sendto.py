@@ -269,7 +269,7 @@ class SendToRegistry:
         self._clock = clock
         self._lock = threading.RLock()
         self._handoffs: dict[str, Handoff] = {}
-        self._consumed: list[str] = []
+        self._consumed: dict[str, str | None] = {}
         self._manifest_cache: dict[str, SendToManifest] = {}
         self._manifest_cache_at = 0.0
 
@@ -381,9 +381,19 @@ class SendToRegistry:
             handoff = self._handoffs.pop(handoff_id, None)
             if handoff is None:
                 return None
-            self._consumed.append(handoff_id)
-            del self._consumed[:-CONSUMED_HISTORY]
+            self._consumed[handoff_id] = None
+            if len(self._consumed) > CONSUMED_HISTORY:
+                self._consumed.pop(next(iter(self._consumed)))
             return handoff
+
+    def finish(self, handoff_id: str, result: str) -> None:
+        with self._lock:
+            if handoff_id in self._consumed:
+                self._consumed[handoff_id] = result
+
+    def delivery(self, handoff_id: str) -> str | None:
+        with self._lock:
+            return self._consumed.get(handoff_id)
 
     def status(self, handoff_id: str) -> str:
         handoff_id = str(handoff_id or "").strip()

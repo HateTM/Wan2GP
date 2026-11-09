@@ -1,6 +1,6 @@
 (() => {
   "use strict";
-  const state = { models: [], selectedModel: null, modelDetail: null, currentSettings: null, filter: "all", query: "", jobs: new Map(), eventSources: new Map(), zoom: 100, view: "workflow" };
+  const state = { models: [], selectedModel: null, modelDetail: null, currentSettings: null, filter: "all", query: "", zoom: 100, view: "workflow" };
   const $ = (id) => document.getElementById(id);
   const S_ = (prefix, value) => esc(String(value == null ? "" : value));
   const esc = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -156,44 +156,36 @@
   // V4.1: canvas node selection drives the right panel. The panel keeps its
   // native model-settings editor; the node contributes model_type + prompt.
   function onNodeSelected(node) {
-    const heading = document.getElementById("inspector-empty");
-    if (!node) return;
-    if (heading) {
-      heading.hidden = false;
-      heading.innerHTML = '<div class="inspector-empty-icon">☑</div><strong>Node: ' + esc(node.title || node.type) +
-        '</strong><span>' + esc(node.type) + (node.params && node.params.path ? " · " + esc(node.params.path) : "") + "</span>";
-    }
-    const modelType = node.params && node.params.model_type;
+    const modelType = node?.params?.model_type;
     if (modelType) {
-      selectModel(modelType).then(() => {
-        const promptBox = document.getElementById("prompt-input");
-        // restore exactly what the node carries - including an EMPTY prompt
-        if (promptBox) promptBox.value = node.params && typeof node.params.prompt === "string" ? node.params.prompt : "";
-        state.nodeSelected = node;
-        const apply = document.getElementById("apply-to-node");
-        if (apply) apply.hidden = false;
-      }).catch(() => {});
+      selectModel(modelType, node);
     } else {
-      // input/ffmpeg nodes: no model settings. Any previously selected model
-      // must be fully forgotten, or "Run this model" would submit the old
-      // model's settings from behind a plain node (audit P2).
-      state.selectedModel = null;
-      state.modelDetail = null;
-      state.currentSettings = null;
-      state.nodeSelected = node;
-      const editor = document.getElementById("inspector-editor");
-      const json = document.getElementById("settings-json");
-      const promptBox = document.getElementById("prompt-input");
-      if (promptBox) promptBox.value = "";  // prompts belong to model nodes only
-      if (editor && json) {
-        editor.hidden = false;
-        json.value = JSON.stringify(node.params || {}, null, 2);
-      }
-      const run = document.getElementById("run-from-inspector");
-      if (run) run.disabled = true;
-      const apply = document.getElementById("apply-to-node");
-      if (apply) apply.hidden = false;
+      resetInspector(node);
+      if (!node) return;
+      $("inspector-editor").hidden = false;
+      $("inspector-editor").dataset.context = "node";
+      $("inspector-json-label").textContent = "Node parameters JSON";
+      $("settings-json").value = JSON.stringify(node.params || {}, null, 2);
+      $("apply-to-node").hidden = false;
     }
+  }
+
+  function resetInspector(node = null) {
+    state.nodeSelected = node;
+    state.modelRequest = null;
+    state.selectedModel = null;
+    state.modelDetail = null;
+    state.currentSettings = null;
+    $("inspector-empty").hidden = Boolean(node);
+    $("inspector-editor").hidden = true;
+    $("prompt-input").value = "";
+    $("apply-to-node").hidden = true;
+    $("run-from-inspector").hidden = Boolean(node);
+    $("run-from-inspector").disabled = true;
+    $("inspector-heading").textContent = node ? (node.title || node.type) : "Parameters";
+    $("inspector-json-label").textContent = "Full WanGP settings JSON";
+    $("settings-state").textContent = node ? "Editing selected node" : "No model or node selected";
+    renderModels();
   }
 
   async function applyToNode() {
@@ -206,25 +198,32 @@
       toast("Settings JSON is invalid.", true);
       return;
     }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      toast("Settings must be a JSON object.", true);
+      return;
+    }
     const modelType = parsed.model_type || (node.params && node.params.model_type) || null;
     // Model nodes take native WanGP settings (prompt included); plain nodes
     // (inputs, ffmpeg) edit their own params (path, slot, ...) - never mix
     // the two, and never push a stale editor prompt into a plain node.
-    const isModelNode = Boolean(node.params && (node.params.model_type || node.params.settings));
-    const applied = window.WanGPStudioCanvas.applyToSelectedNode({
+    const isModelNode = $("inspector-editor").dataset.context === "model-node";
+    const applied = await window.WanGPStudioCanvas.applyToSelectedNode({
+      nodeId: node.id,
       prompt: isModelNode ? document.getElementById("prompt-input").value : null,
       model_type: isModelNode ? modelType : null,
       settings: isModelNode ? parsed : null,
       params: isModelNode ? null : parsed
     });
-    toast(applied ? "Applied to the selected node." : "The canvas is unavailable.", !applied);
+    toast(applied ? "Applied to the selected node." : "Could not apply settings to this node.", !applied);
   }
 
-  async function selectModel(modelType) {
+  async function selectModel(modelType, node = null) {
+    resetInspector(node);
+    const request = Symbol();
+    state.modelRequest = request;
     state.selectedModel = modelType;
     renderModels();
     $("inspector-empty").hidden = true;
-    $("inspector-editor").hidden = false;
     $("run-from-inspector").disabled = true;
     $("settings-state").textContent = "Loading model definition…";
     $("node-status").textContent = "Loading…";
@@ -233,20 +232,23 @@
     $("node-model").textContent = modelType;
     try {
       const detail = await api("api/models/" + encodeURIComponent(modelType));
-      if (state.selectedModel !== modelType) return;
+      if (state.modelRequest !== request) return;
       state.modelDetail = detail;
       const model = detail.model || {};
       const name = model.name || detail.metadata && detail.metadata.name || modelType;
       $("selected-model-name").textContent = name;
       $("selected-model-type").textContent = modelType;
       $("node-model").textContent = name;
-      $("prompt-input").value = detail.defaults && detail.defaults.prompt || "";
-      state.currentSettings = detail.defaults || { model_type: modelType };
+      state.currentSettings = node ? (node.params.settings || {}) : (detail.defaults || { model_type: modelType });
+      $("prompt-input").value = node ? (node.params.prompt ?? state.currentSettings.prompt ?? "") : (state.currentSettings.prompt || "");
       $("settings-json").value = JSON.stringify(state.currentSettings, null, 2);
       renderPresets(detail);
       renderLoras(detail);
-      $("settings-state").textContent = "Native WanGP defaults loaded";
-      $("run-from-inspector").disabled = false;
+      $("inspector-editor").dataset.context = node ? "model-node" : "model";
+      $("inspector-editor").hidden = false;
+      $("settings-state").textContent = node ? "Editing selected node" : "Native WanGP defaults loaded";
+      $("apply-to-node").hidden = !node;
+      $("run-from-inspector").disabled = Boolean(node);
       $("canvas-model-count").textContent = name;
       $("node-status").textContent = "Ready";
       const selected = state.models.find((item) => item.model_type === modelType);
@@ -254,7 +256,7 @@
       renderModels();
       renderCapabilities(detail);
     } catch (error) {
-      if (state.selectedModel !== modelType) return;
+      if (state.modelRequest !== request) return;
       $("settings-state").textContent = "Could not load model";
       $("node-status").textContent = "Error";
       toast(error.message, true);
@@ -288,6 +290,7 @@
       state.models = await api("api/models?limit=500&availability=1");
       renderModels();
       renderModelLinks();
+      if (state.view === "generate") window.WanGPStudioGenerate?.activate();
       const available = state.models.filter((model) => availabilityStatus(model) === "available").length;
       const partial = state.models.filter((model) => availabilityStatus(model) === "partial").length;
       $("api-status").textContent = state.models.length + " models · " + available + " available" +
@@ -319,6 +322,7 @@
   async function loadPreset() {
     if (!state.selectedModel || !$("preset-select").value) return;
     const modelType = state.selectedModel;
+    const modelRequest = state.modelRequest;
     const settingId = $("preset-select").value;
     $("load-preset").disabled = true;
     $("settings-state").textContent = "Loading native preset…";
@@ -326,17 +330,18 @@
       const settings = await api(
         "api/models/" + encodeURIComponent(modelType) + "/settings?setting_id=" + encodeURIComponent(settingId)
       );
-      if (state.selectedModel !== modelType) return;
+      if (state.modelRequest !== modelRequest) return;
       state.currentSettings = settings;
       $("prompt-input").value = settings.prompt || "";
       $("settings-json").value = JSON.stringify(settings, null, 2);
       $("settings-state").textContent = "Preset loaded · edits are local until submitted";
       toast("Preset loaded into the settings editor.");
     } catch (error) {
+      if (state.modelRequest !== modelRequest) return;
       $("settings-state").textContent = "Could not load preset";
       toast(error.message, true);
     } finally {
-      if (state.selectedModel === modelType) {
+      if (state.modelRequest === modelRequest) {
         $("load-preset").disabled = !$("preset-select").value;
       }
     }
@@ -347,43 +352,16 @@
     let settings;
     try { settings = settingsFromEditor(); }
     catch (error) { return toast(error.message, true); }
-    $("run-generation").disabled = true;
     $("run-from-inspector").disabled = true;
     try {
-      const result = await api("api/jobs", { method: "POST", body: JSON.stringify({ settings }) });
+      await api("api/jobs", { method: "POST", body: JSON.stringify({ settings }) });
       toast("Task submitted to the native WanGP queue.");
-      await refreshJobs();
-      watchJob(result.job_id);
+      await refreshTasks();
     } catch (error) {
       toast(error.message, true);
     } finally {
-      $("run-generation").disabled = false;
-      $("run-from-inspector").disabled = !(state.selectedModel && state.modelDetail);
+      $("run-from-inspector").disabled = Boolean(state.nodeSelected) || !(state.selectedModel && state.modelDetail);
     }
-  }
-
-  function jobCard(job) {
-    const status = String(job.status || "queued");
-    const cls = status === "completed" || status === "failed" ? " " + status : "";
-    const cancel = status === "completed" || status === "failed" || status === "cancelled" ? "" : '<button class="cancel-job" data-cancel="' + esc(job.id) + '">Cancel</button>';
-    // Generation History: a finished job can be repeated with its original settings
-    const repeat = status === "completed" || status === "failed" ? '<button class="cancel-job" data-repeat="' + esc(job.id) + '">Repeat</button>' : "";
-    const files = (job.generated_files || []).slice(0, 3);
-    const filesHtml = files.length
-      ? '<div class="queue-files"><button class="queue-file" data-open-gallery="' + esc(job.id) + '">View ' + files.length +
-        ' result(s) in the Media Center</button></div>' : "";
-    const date = job.created_at ? new Date(job.created_at * 1000).toLocaleString() : "";
-    return '<article class="queue-card"><div class="queue-card-top"><span class="queue-card-title">' + esc(job.model_type) +
-      (date ? ' <small class="queue-date">' + esc(date) + "</small>" : "") +
-      '</span><span class="queue-state' + cls + '">' + esc(status) + '</span></div><div class="queue-card-message">' +
-      esc(job.message || job.prompt || "") + '</div><div class="queue-progress"><span style="width:' +
-      Math.max(0, Math.min(100, Number(job.progress) || 0)) + '%"></span></div>' + filesHtml + repeat + cancel + '</article>';
-  }
-
-  function bindJobActions(host) {
-    host.querySelectorAll("[data-cancel]").forEach((button) => button.addEventListener("click", () => cancelJob(button.dataset.cancel)));
-    host.querySelectorAll("[data-repeat]").forEach((button) => button.addEventListener("click", () => repeatJob(button.dataset.repeat)));
-    host.querySelectorAll("[data-open-gallery]").forEach((button) => button.addEventListener("click", () => setView("gallery")));
   }
 
   function taskCard(task) {
@@ -406,9 +384,12 @@
       }
       if (task.has_graph && status !== "running") {
         actions += '<button class="cancel-job" data-open-graph="' + S_("task", task.id) + '">Open workflow</button>';
+        if (["completed", "failed", "cancelled"].includes(status)) {
+          actions += '<button class="cancel-job" data-repeat-run="' + S_("task", task.id) + '">Repeat workflow</button>';
+        }
       }
     }
-    const files = (task.outputs || []).slice(0, 3);
+    const files = task.media || [];
     const filesHtml = files.length
       ? '<div class="queue-files"><button class="queue-file" data-open-media="' + S_("task", task.id) + '">View ' + files.length +
         ' result(s) in the Media Center</button></div>' : "";
@@ -416,80 +397,83 @@
       kindBadge + " " + esc(task.name || "") +
       (date ? ' <small class="queue-date">' + esc(date) + "</small>" : "") +
       '</span><span class="queue-state' + cls + '">' + esc(status) + '</span></div><div class="queue-card-message">' +
-      esc(task.message || "") + '</div><div class="queue-progress"><span style="width:' +
+      esc(task.errors?.join(" · ") || task.message || "") + '</div><div class="queue-progress"><span style="width:' +
       Math.max(0, Math.min(100, Number(task.progress) || 0)) + '%"></span></div>' + filesHtml + actions + '</article>';
   }
 
   // registry id -> task record, so action handlers can reach the graph
   state.tasks = new Map();
+  state.pendingTaskActions = new Set();
 
   function renderTasks() {
     const records = Array.from(state.tasks.values());
-    const active = records.filter((task) => !["completed", "failed", "cancelled"].includes(String(task.status || "queued"))).length;
+    const active = records.filter((task) => !["completed", "failed", "cancelled"].includes(String(task.status || "queued")));
     const badge = $("queue-nav-count");
-    badge.textContent = String(active);
-    badge.hidden = active === 0;
-    if (!records.length) {
-      $("queue-view-list").innerHTML = '<div class="queue-empty">No tasks yet. Run a model in Generate or a workflow on the canvas to see progress here.</div>';
-      return;
+    badge.textContent = String(active.length);
+    badge.hidden = active.length === 0;
+    $("queue-count").textContent = String(active.length);
+    const drawer = $("queue-list");
+    if (state.view === "workflow" && !$("execution-drawer").classList.contains("collapsed")) {
+      drawer.innerHTML = active.slice(0, 5).map(taskCard).join("") || '<div class="queue-empty">No active Studio tasks.</div>';
     }
-    $("queue-view-list").innerHTML = records.map(taskCard).join("");
-    $("queue-view-list").querySelectorAll("[data-cancel]").forEach((button) => button.addEventListener("click", () => cancelJob(button.dataset.cancel)));
-    $("queue-view-list").querySelectorAll("[data-repeat]").forEach((button) => button.addEventListener("click", () => repeatJob(button.dataset.repeat)));
-    $("queue-view-list").querySelectorAll("[data-cancel-run]").forEach((button) => button.addEventListener("click", async () => {
-      try {
-        await api("api/workflow/runs/" + encodeURIComponent(button.dataset.cancelRun) + "/cancel", { method: "POST" });
+    if (state.view === "queue") {
+      $("queue-view-list").innerHTML = records.map(taskCard).join("") ||
+        '<div class="queue-empty">No tasks yet. Run a model or workflow to see progress here.</div>';
+    }
+  }
+
+  async function handleTaskAction(event) {
+    const button = event.target.closest("button");
+    const taskId = button?.closest("[data-task]")?.dataset.task;
+    if (!taskId || button.disabled || state.pendingTaskActions.has(taskId)) return;
+    const action = button.dataset;
+    state.pendingTaskActions.add(taskId);
+    button.disabled = true;
+    try {
+      if (action.cancel) await cancelJob(action.cancel);
+      if (action.repeat) await repeatJob(action.repeat);
+      if (action.cancelRun) {
+        await api("api/workflow/runs/" + encodeURIComponent(action.cancelRun) + "/cancel", { method: "POST" });
         toast("Cancellation requested.");
-      } catch (error) { toast(error.message, true); }
-      window.setTimeout(refreshTasks, 600);
-    }));
-    $("queue-view-list").querySelectorAll("[data-open-graph]").forEach((button) => button.addEventListener("click", () => {
-      const task = state.tasks.get(button.dataset.openGraph);
-      if (!task || !task.graph || !window.WanGPStudioCanvas) return;
-      setView("workflow");
-      window.WanGPStudioCanvas.loadGraphIntoCanvas(task.graph);
-    }));
-    $("queue-view-list").querySelectorAll("[data-open-media]").forEach((button) => button.addEventListener("click", () => {
-      const task = state.tasks.get(button.dataset.openMedia);
-      window.WanGPStudioGallery.openResults(task ? task.outputs : []);
-    }));
+        await refreshTasks();
+      }
+      if (action.repeatRun) {
+        await api("api/tasks/" + encodeURIComponent(action.repeatRun) + "/repeat", { method: "POST" });
+        toast("Workflow submitted.");
+        await refreshTasks();
+      }
+      if (action.openGraph) {
+        const graph = await api("api/tasks/" + encodeURIComponent(action.openGraph) + "/graph");
+        setView("workflow");
+        if (!window.WanGPStudioCanvas.loadGraphIntoCanvas(graph)) {
+          toast("Could not open the workflow while a save is in progress.", true);
+        }
+      }
+      if (action.openMedia) {
+        window.WanGPStudioGallery.openResults(state.tasks.get(action.openMedia)?.media || []);
+      }
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      state.pendingTaskActions.delete(taskId);
+      button.disabled = false;
+    }
   }
 
   async function refreshTasks() {
+    const request = Symbol();
+    state.tasksRequest = request;
     try {
-      const tasks = await api("api/tasks");
-      state.tasks.clear();
-      tasks.forEach((task) => state.tasks.set(task.id, task));
+      const tasks = await api("api/tasks?summary=1");
+      if (state.tasksRequest !== request) return;
+      state.tasks = new Map(tasks.map((task) => [task.id, task]));
+      $("queue-native-note").textContent = "Shows tasks submitted from Studio.";
       renderTasks();
     } catch (error) {
-      console.warn("task registry unavailable:", error && error.message);
+      if (state.tasksRequest === request) {
+        $("queue-native-note").textContent = "Could not refresh Studio tasks: " + error.message;
+      }
     }
-  }
-
-  function renderJobs() {
-    const records = Array.from(state.jobs.values()).sort((a, b) => b.created_at - a.created_at);
-    $("queue-count").textContent = String(records.length);
-    const active = records.filter((job) => !["completed", "failed", "cancelled"].includes(String(job.status || "queued"))).length;
-    const badge = $("queue-nav-count");
-    badge.textContent = String(active);
-    badge.hidden = active === 0;
-    if (!records.length) {
-      $("queue-list").innerHTML = '<div class="queue-empty">No Studio jobs yet. Run a model to see execution progress here.</div>';
-      return;
-    }
-    $("queue-list").innerHTML = records.slice(0, 20).map(jobCard).join("");
-    bindJobActions($("queue-list"));
-    // the Queue PAGE is owned by the unified registry (renderTasks, /api/tasks):
-    // it shows generation jobs AND workflow runs; the drawer stays jobs-only
-  }
-
-  async function refreshJobs() {
-    try {
-      const records = await api("api/jobs");
-      state.jobs.clear();
-      records.forEach((record) => state.jobs.set(record.id, record));
-      renderJobs();
-    } catch (_) {}
   }
 
   async function repeatJob(jobId) {
@@ -498,42 +482,15 @@
     } catch (error) {
       toast(error.message, true);
     }
-    await refreshJobs();
+    await refreshTasks();
   }
 
   async function cancelJob(jobId) {
     try {
       await api("api/jobs/" + encodeURIComponent(jobId) + "/cancel", { method: "POST" });
       toast("Cancellation requested.");
-      await refreshJobs();
+      await refreshTasks();
     } catch (error) { toast(error.message, true); }
-  }
-
-  function watchJob(jobId) {
-    if (!jobId || state.eventSources.has(jobId)) return;
-    const source = new EventSource("api/jobs/" + encodeURIComponent(jobId) + "/events", { withCredentials: true });
-    state.eventSources.set(jobId, source);
-    source.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        const previous = state.jobs.get(jobId) || { id: jobId };
-        if (message.kind === "progress") {
-          state.jobs.set(jobId, Object.assign({}, previous, {
-            progress: message.data.progress, phase: message.data.phase, message: message.data.status, status: "running"
-          }));
-          renderJobs();
-        } else if (message.kind === "status") {
-          state.jobs.set(jobId, Object.assign({}, previous, { message: message.data.message || previous.message }));
-          renderJobs();
-        }
-      } catch (_) {}
-    };
-    source.addEventListener("end", () => {
-      source.close(); state.eventSources.delete(jobId); refreshJobs();
-    });
-    source.onerror = () => {
-      source.close(); state.eventSources.delete(jobId); refreshJobs();
-    };
   }
 
   function setFilter(filter) {
@@ -575,12 +532,20 @@
       }
       if (item.mode) document.body.classList.toggle(item.mode, name === view);
       const nav = $(item.nav);
-      if (nav) nav.classList.toggle("active", name === view);
+      if (nav) {
+        nav.classList.toggle("active", name === view);
+        if (name === view) nav.setAttribute("aria-current", "page");
+        else nav.removeAttribute("aria-current");
+      }
     });
     $("breadcrumb-current").textContent = config.label;
     try { history.replaceState(null, "", config.hash); } catch (_) {}
     if (config.activate && window[config.activate]) window[config.activate].activate();
     if (!config.section && window.WanGPStudioCanvas) window.WanGPStudioCanvas.activate();
+    if (view === "workflow" || view === "queue") {
+      renderTasks();
+      refreshTasks();
+    }
   }
 
   function bindEvents() {
@@ -590,7 +555,7 @@
       if (button) setFilter(button.dataset.filter);
     });
     $("refresh-models").addEventListener("click", loadModels);
-    $("refresh-queue").addEventListener("click", refreshJobs);
+    $("refresh-queue").addEventListener("click", refreshTasks);
     $("load-preset").addEventListener("click", loadPreset);
     $("run-generation").addEventListener("click", () => {
       if (window.WanGPStudioCanvas && window.WanGPStudioCanvas.runCurrent) {
@@ -612,7 +577,9 @@
     $("settings-json").addEventListener("input", () => {
       try {
         const settings = JSON.parse($("settings-json").value || "{}");
-        $("prompt-input").value = typeof settings.prompt === "string" ? settings.prompt : "";
+        if ($("inspector-editor").dataset.context !== "node") {
+          $("prompt-input").value = typeof settings.prompt === "string" ? settings.prompt : "";
+        }
         $("settings-state").textContent = "Unsaved edits";
       } catch (_) {
         $("settings-state").textContent = "Invalid settings JSON";
@@ -630,8 +597,7 @@
       $("settings-state").textContent = "Native defaults restored";
     });
     $("clear-selection").addEventListener("click", () => {
-      state.selectedModel = null; state.modelDetail = null; state.currentSettings = null;
-      $("inspector-empty").hidden = false; $("inspector-editor").hidden = true;
+      resetInspector();
       $("preset-select").innerHTML = '<option>No presets available</option>';
       $("preset-select").disabled = true; $("load-preset").disabled = true;
       $("preset-count").textContent = ""; $("lora-count").textContent = "";
@@ -662,15 +628,21 @@
       $("inspector-toggle").setAttribute("aria-pressed", open ? "true" : "false");
     });
     $("queue-refresh").addEventListener("click", refreshTasks);
+    $("queue-list").addEventListener("click", handleTaskAction);
+    $("queue-view-list").addEventListener("click", handleTaskAction);
+    $("drawer-open-queue").addEventListener("click", () => setView("queue"));
     $("drawer-toggle").addEventListener("click", () => {
       const drawer = $("execution-drawer");
       const collapsed = drawer.classList.toggle("collapsed");
       $("drawer-toggle").setAttribute("aria-expanded", collapsed ? "false" : "true");
       $("drawer-toggle").textContent = collapsed ? "▾" : "▴";
+      $("queue-list").inert = collapsed;
+      if (!collapsed) renderTasks();
     });
     // V4.5 Image Editor bridge: dependency state from the plugin registry,
     // never a duplicated editor.
     async function refreshImageEditor() {
+      $("imageeditor-pick").hidden = true;
       try {
         const environment = await api("api/environment");
         const suite = (environment.plugins || []).find((plugin) => plugin.id === "ImageSuite-Wan2GP");
@@ -683,6 +655,12 @@
           : state_ === "disabled"
             ? "ImageSuite is installed but disabled — enable it in the Plugins view."
             : "ImageSuite is not installed. Install it with the Plugin Manager, or edit images in the native WanGP UI.";
+        if (state_ === "enabled") {
+          const targets = await api("api/sendto/targets").catch(() => null);
+          const ready = targets?.bridge && targets.targets?.some((target) => target.plugin === suite.id && target.enabled);
+          $("imageeditor-pick").hidden = !ready;
+          if (!ready) $("imageeditor-message").textContent = "ImageSuite is enabled. The file transfer bridge is unavailable.";
+        }
       } catch (error) {
         $("imageeditor-plugin-state").textContent = "unreachable";
         $("imageeditor-message").textContent = "Could not read the plugin registry: " + error.message;
@@ -691,17 +669,22 @@
       }
     }
     $("imageeditor-goto-plugins").addEventListener("click", () => setView("plugins"));
+    $("imageeditor-pick").addEventListener("click", () => {
+      setView("gallery");
+      document.querySelector('#gallery-kinds [data-kind="image"]').click();
+    });
     window.WanGPStudioImageEditor = { activate: refreshImageEditor };
     document.addEventListener("keydown", (event) => {
       if (event.key === "/" && !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) {
         event.preventDefault();
         if (state.view === "gallery") $("gallery-query").focus();
-        else $("model-search").focus();
+        else if (state.view === "generate") $("generate-model-search").focus();
+        else if (state.view === "workflow") $("model-search").focus();
       }
       if ((event.ctrlKey || event.metaKey) && (event.key === "s" || event.key === "S")) {
         if (state.view === "workflow" && window.WanGPStudioCanvas) {
           event.preventDefault();
-          window.WanGPStudioCanvas.saveGraph();
+          window.WanGPStudioCanvas.saveCurrent();
         }
       }
     });
@@ -718,6 +701,7 @@
     getView: () => state.view,
     getModels: () => state.models.slice(),
     reloadModels: () => loadModels(),
+    refreshTasks,
     modelCategory: category,
     modelAvailability: availabilityStatus
   };
@@ -727,10 +711,14 @@
     const view = viewFromHash(location.hash);
     if (view) setView(view);
     await loadModels();
-    await refreshJobs();
     await refreshTasks();
-    window.setInterval(refreshJobs, 5000);
-    window.setInterval(refreshTasks, 5000);
+    window.setInterval(() => {
+      const hasActiveTasks = !$("queue-nav-count").hidden;
+      if (!document.hidden && (state.view === "queue" || hasActiveTasks)) refreshTasks();
+    }, 5000);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) refreshTasks();
+    });
     window.setInterval(probeHealth, 30000);
   }
   init();

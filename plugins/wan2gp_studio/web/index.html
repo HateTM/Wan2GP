@@ -5,15 +5,15 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>WanGP Studio</title>
-  <link rel="stylesheet" href="assets/studio.css">
-  <script src="assets/studio.js" defer></script>
-  <script src="assets/gallery.js" defer></script>
-  <script src="assets/workflow.js" defer></script>
+  <link rel="stylesheet" href="assets/studio.css?v=1.6.1-audit">
+  <script src="assets/studio.js?v=1.6.1-audit" defer></script>
+  <script src="assets/gallery.js?v=1.6.1-audit" defer></script>
+  <script src="assets/workflow.js?v=1.6.1-audit.3" defer></script>
   <script src="assets/telemetry.js" defer></script>
   <script src="assets/plugins.js" defer></script>
   <script src="assets/dashboard.js" defer></script>
   <script src="assets/settings.js" defer></script>
-  <script src="assets/generate.js" defer></script>
+  <script src="assets/generate.js?v=1.6.1-audit" defer></script>
   <script src="assets/models.js" defer></script>
 </head>
 <body>
@@ -61,7 +61,7 @@
     <section class="workspace">
       <div class="workspace-heading">
         <div><div class="eyebrow">VISUAL GENERATION WORKSPACE</div><h1>Workflow</h1><p>Explore installed models and submit generation tasks to WanGP.</p></div>
-        <div class="heading-actions"><button class="button button-quiet" id="clear-selection">Reset</button><button class="button button-primary" id="run-generation">▶ Run workflow</button></div>
+        <div class="heading-actions"><button class="button button-quiet" id="clear-selection">Clear Inspector</button><button class="button button-primary" id="run-generation">▶ Run workflow</button></div>
       </div>
 
       <div class="studio-grid">
@@ -76,7 +76,7 @@
         </section>
 
         <section class="panel canvas-panel">
-          <div class="canvas-toolbar"><div><span class="panel-kicker">WORKFLOW</span><select id="workflow-select" class="preset-select workflow-select" aria-label="Workflow"><option value="">Loading…</option></select><select id="workflow-template" class="preset-select workflow-template" aria-label="Load a template"><option value="">Templates…</option></select><span class="draft-tag" id="workflow-state">CANVAS</span></div><div class="canvas-tools"><button class="small-tool pane-toggle" id="library-toggle" title="Toggle the model library" aria-pressed="true">◧</button><button class="small-tool pane-toggle" id="inspector-toggle" title="Toggle the inspector drawer" aria-pressed="false">☷</button><button class="small-tool" id="workflow-new" title="New workflow">＋</button><button class="small-tool" id="workflow-save" title="Save workflow">⌸</button><button class="small-tool" id="workflow-run" title="Run workflow">▶</button><button class="small-tool" id="workflow-cancel" title="Cancel run" disabled>■</button></div></div>
+          <div class="canvas-toolbar"><div><span class="panel-kicker">WORKFLOW</span><select id="workflow-select" class="preset-select workflow-select" aria-label="Workflow"><option value="">Loading…</option></select><select id="workflow-template" class="preset-select workflow-template" aria-label="Load a template"><option value="">Templates…</option></select><span class="draft-tag" id="workflow-state">CANVAS</span></div><div class="canvas-tools"><button class="small-tool pane-toggle" id="library-toggle" title="Toggle the model library" aria-pressed="true">◧</button><button class="small-tool pane-toggle" id="inspector-toggle" title="Toggle the inspector drawer" aria-pressed="false">☷</button><button class="small-tool" id="workflow-new" title="New workflow">＋</button><button class="small-tool" id="workflow-save" title="Save workflow">⌸</button><button class="button button-quiet" id="workflow-save-copy">Save as…</button><button class="small-tool" id="workflow-cancel" title="Cancel run" disabled>■</button></div></div>
           <div class="canvas workflow-canvas-host" id="workflow-canvas-host">
             <div class="canvas-empty" id="workflow-unavailable" hidden></div>
             <iframe id="workflow-frame" class="workflow-frame" title="Workflow canvas" sandbox="allow-scripts allow-pointer-lock allow-downloads" hidden></iframe>
@@ -92,17 +92,17 @@
         </section>
 
         <section class="panel inspector-panel">
-          <div class="panel-header"><div><span class="panel-kicker">INSPECTOR</span><h2>Parameters</h2></div><span class="inspector-icon">☷</span></div>
+          <div class="panel-header"><div><span class="panel-kicker">INSPECTOR</span><h2 id="inspector-heading">Parameters</h2></div><span class="inspector-icon">☷</span></div>
           <div class="inspector-content">
             <div class="inspector-empty" id="inspector-empty"><div class="inspector-empty-icon">☷</div><strong>Nothing selected</strong><span>Select a model to load its native WanGP settings.</span></div>
             <div id="inspector-editor" hidden>
               <div class="selected-model"><div class="selected-model-icon">◈</div><div><strong id="selected-model-name">Model</strong><small id="selected-model-type">model_type</small></div></div>
-              <div class="inspector-section">
-                <div class="section-title"><span>GENERATION SETTINGS</span><button id="reset-settings">Reset</button></div>
-                <label class="field-label" for="prompt-input">Prompt</label><textarea id="prompt-input" rows="5" placeholder="Describe the scene…"></textarea>
-                <div class="settings-toolbar"><span>Full WanGP settings JSON</span><button id="format-json">Format</button></div>
+              <div class="inspector-section node-settings">
+                <div class="section-title model-only"><span>GENERATION SETTINGS</span><button id="reset-settings">Reset</button></div>
+                <label class="field-label model-only" for="prompt-input">Prompt</label><textarea class="model-only" id="prompt-input" rows="5" placeholder="Describe the scene…"></textarea>
+                <div class="settings-toolbar"><label for="settings-json" id="inspector-json-label">Full WanGP settings JSON</label><button id="format-json">Format</button></div>
                 <textarea id="settings-json" class="json-editor" spellcheck="false" rows="12"></textarea>
-                <p class="field-note">Advanced parameters are preserved. Edit the JSON to access model-specific options not shown as simple controls.</p>
+                <p class="field-note model-only">Advanced parameters are preserved. Edit the JSON to access model-specific options not shown as simple controls.</p>
               </div>
               <div class="inspector-section">
                 <div class="section-title"><span>PRESETS &amp; PROFILES</span><span id="preset-count"></span></div>
@@ -292,7 +292,6 @@
     <section class="generate-view" id="generate-view" hidden>
       <header class="gallery-head">
         <div><div class="eyebrow">WORKSPACE</div><h1>Generate</h1><p>Quick submission to the native WanGP queue — no graph building required.</p></div>
-        <div class="gallery-head-actions"><button class="button button-primary" id="generate-run" disabled>▶ Run generation</button></div>
       </header>
       <div class="studio-grid generate-grid">
         <section class="panel model-panel">
@@ -332,7 +331,7 @@
               <p class="field-note">Advanced parameters are preserved. Edit the JSON for model-specific options; unknown fields are passed through untouched.</p>
             </div>
           </div>
-          <div class="inspector-bottom"><span class="save-indicator" id="generate-state">No model selected</span><button class="button button-primary button-full" id="generate-submit" disabled>Submit to native queue</button></div>
+          <div class="inspector-bottom"><span class="save-indicator" id="generate-state" role="status">No model selected</span><button class="button button-primary button-full" id="generate-submit" disabled>Run generation</button></div>
         </section>
       </div>
     </section>
@@ -358,7 +357,8 @@
           <div class="resource-head"><span>DEPENDENCY</span><span id="imageeditor-plugin-state">checking…</span></div>
           <div class="metric current-line" id="imageeditor-message">Checking the plugin registry…</div>
           <div class="dashboard-actions">
-            <a class="button button-primary" id="imageeditor-open" href="/" target="_blank" rel="noopener" hidden>Open ImageSuite ↗</a>
+            <button class="button button-primary" id="imageeditor-pick" hidden>Choose an image</button>
+            <a class="button button-quiet" id="imageeditor-open" href="/?studio_image_editor=1" target="_blank" rel="noopener" hidden>Open ImageSuite ↗</a>
             <button class="button button-quiet" id="imageeditor-goto-plugins" hidden>Open Plugins</button>
           </div>
         </article>
@@ -366,24 +366,36 @@
           <div class="resource-head"><span>HOW TO EDIT</span></div>
           <div class="metric current-line">1. Pick an image in the Media Center and open the lightbox.</div>
           <div class="metric current-line">2. Use Send to plugin - the bridge hands the file to ImageSuite.</div>
-          <div class="metric current-line">3. Edited results land back in the WanGP outputs and appear here.</div>
+          <div class="metric current-line">3. Find edited files in Media Center after saving them to a WanGP output folder.</div>
         </article>
       </div>
     </section>
 
     <section class="queue-panel" id="execution-drawer">
-      <div class="queue-heading"><div class="queue-title"><span class="panel-kicker">EXECUTION</span><h2>Studio tasks <span id="queue-count">0</span></h2></div><div class="queue-actions"><span class="queue-runtime"><i></i> Submitted to native queue</span><button class="small-tool" id="drawer-toggle" title="Collapse or expand the execution drawer" aria-expanded="true">▴</button><button class="small-tool" id="refresh-queue">↻</button></div></div>
+      <div class="queue-heading"><div class="queue-title"><span class="panel-kicker">EXECUTION</span><h2>Active tasks <span id="queue-count">0</span></h2></div><div class="queue-actions"><button class="button button-quiet" id="drawer-open-queue">Open Queue</button><button class="small-tool" id="drawer-toggle" title="Collapse or expand the execution drawer" aria-expanded="true">▴</button><button class="small-tool" id="refresh-queue" aria-label="Refresh Studio tasks">↻</button></div></div>
       <div class="queue-list" id="queue-list"><div class="queue-empty">No Studio jobs yet. Run a model to see execution progress here.</div></div>
     </section>
     <footer class="main-footer"><span>WanGP Studio <b>1.6.1</b> · Powered by WanGP</span><span id="api-status">Connecting to local runtime…</span></footer>
   </main>
 </div>
 
+<dialog class="workflow-name-dialog" id="workflow-name-dialog" aria-labelledby="workflow-name-label">
+  <form method="dialog">
+    <label for="workflow-name-input" id="workflow-name-label">Workflow name</label>
+    <input id="workflow-name-input" type="text" autofocus>
+    <div class="heading-actions">
+      <button class="button button-primary" value="save">Save graph</button>
+      <button class="button button-quiet" value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog class="lightbox" id="lightbox">
   <div class="lightbox-shell">
     <header class="lightbox-head">
       <div class="lightbox-title"><span class="panel-kicker" id="lightbox-kind">MEDIA</span><strong id="lightbox-name">Item</strong></div>
       <div class="lightbox-head-actions">
+        <select class="preset-select" id="lightbox-task-results" aria-label="Task results" hidden></select>
         <a class="button button-quiet" id="lightbox-download" href="#" download>Download</a>
         <button class="icon-button" id="lightbox-close" title="Close">✕</button>
       </div>

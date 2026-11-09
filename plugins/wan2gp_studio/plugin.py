@@ -115,9 +115,15 @@ SENDTO_BRIDGE_JS = r"""
     element.dispatchEvent(new Event("change", {bubbles: true}));
     await sleep(80);
     trigger.click();
-    const consumed = await waitFor(async () => (await statusOf(handoffId)).status === "consumed", 12000, 250);
-    if(!consumed){
+    const delivery = await waitFor(async () => (await statusOf(handoffId)).delivery, 12000, 250);
+    if(!delivery){
       toast("Send to plugin: WanGP did not accept the frame. Retry from Studio.", true);
+      dropTokenFromAddress();
+      return;
+    }
+    if(!delivery.startsWith("sent:")){
+      const reasons = {"disabled":"The target plugin is disabled.", "missing-file":"The source file is no longer available.", "no-state":"WanGP could not access the plugin inbox."};
+      toast("Send to plugin: " + (reasons[delivery] || delivery), true);
       dropTokenFromAddress();
       return;
     }
@@ -130,6 +136,12 @@ SENDTO_BRIDGE_JS = r"""
   installStyle();
   const pendingSend = new URLSearchParams(window.location.search).get("studio_sendto");
   if(pendingSend) run(pendingSend);
+  else if(new URLSearchParams(window.location.search).get("studio_image_editor") === "1"){
+    waitFor(() => tabByName("Image Suite"), 8000, 250).then((tab) => {
+      if(tab) tab.click();
+      else toast("ImageSuite tab is unavailable. Check the Plugin Manager.", true);
+    });
+  }
 })();
 """
 
@@ -247,7 +259,7 @@ class _JobRecord:
             "task_count": getattr(update, "task_count", None),
         })
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(self, *, include_settings: bool = True) -> dict[str, Any]:
         with self._lock:
             return {
                 "id": self.id,
@@ -261,7 +273,7 @@ class _JobRecord:
                 "updated_at": self.updated_at,
                 "generated_files": list(self.generated_files),
                 "errors": list(self.errors),
-                "settings": copy.deepcopy(self.settings),
+                **({"settings": copy.deepcopy(self.settings)} if include_settings else {}),
             }
 
     def events_after(self, event_id: int) -> tuple[list[dict[str, Any]], int]:
@@ -452,12 +464,15 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         # Delivery-time re-check: the plugin may have been disabled (or
         # uninstalled) between create() and the bridge firing.
         if not self._plugin_enabled(handoff.plugin):
-            return state, "disabled"
-        if not os.path.isfile(handoff.path):
-            return state, "missing-file"
-        if not inbox_append(state, handoff.inbox_key, handoff.path, handoff.slot):
-            return state, "no-state"
-        return state, f"sent:{handoff.slot}"
+            result = "disabled"
+        elif not os.path.isfile(handoff.path):
+            result = "missing-file"
+        elif not inbox_append(state, handoff.inbox_key, handoff.path, handoff.slot):
+            result = "no-state"
+        else:
+            result = f"sent:{handoff.slot}"
+        self._sendto.finish(handoff_id, result)
+        return state, result
 
     def _media_roots(self) -> list[str]:
         """Output roots of the installed WanGP plus optional media folders."""
@@ -902,6 +917,9 @@ class WanGPStudioPlugin(WAN2GPPlugin):
         @app.get("/api/sendto/{handoff_id}")
         def sendto_status(handoff_id: str):
             payload = {"status": self._sendto.status(handoff_id)}
+            delivery = self._sendto.delivery(handoff_id)
+            if delivery is not None:
+                payload["delivery"] = delivery
             handoff = self._sendto.peek(handoff_id)
             if handoff is not None:
                 payload["handoff"] = handoff.as_dict(include_path=False)
@@ -1076,17 +1094,24 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             except FileNotFoundError:
                 raise HTTPException(status_code=404, detail=f"Workflow not found: {slug}") from None
 
-        @app.put("/api/workflow/workflows/{slug}")
-        async def workflow_save(slug: str, request: Request):
+        async def _save_workflow(request: Request, slug: str | None = None):
             workflow_gate()
             payload = await request.json()
             graph = payload.get("graph") if isinstance(payload, dict) else None
             if not isinstance(graph, dict):
                 raise HTTPException(status_code=400, detail="Request must contain a graph object.")
             try:
-                return workflow.save(graph, payload.get("name") or slug)
+                return workflow.save(graph, payload.get("name"), workflow_id=slug)
             except Exception as exc:
                 raise HTTPException(status_code=400, detail=f"Invalid workflow: {exc}") from exc
+
+        @app.post("/api/workflow/workflows")
+        async def workflow_create(request: Request):
+            return await _save_workflow(request)
+
+        @app.put("/api/workflow/workflows/{slug}")
+        async def workflow_save(slug: str, request: Request):
+            return await _save_workflow(request, slug)
 
         @app.delete("/api/workflow/workflows/{slug}")
         def workflow_delete(slug: str):
@@ -1106,15 +1131,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
             except WorkflowUnavailable as exc:
                 raise HTTPException(status_code=503, detail={"state": "unavailable", "message": str(exc)}) from exc
 
-        @app.post("/api/workflow/runs")
-        async def workflow_run(request: Request):
-            payload = await request.json()
-            graph = payload.get("graph") if isinstance(payload, dict) else None
-            if not isinstance(graph, dict):
-                raise HTTPException(status_code=400, detail="Request must contain a graph object.")
-            inputs = payload.get("inputs")
-            if not isinstance(inputs, list):
-                inputs = []
+        def start_workflow(graph, inputs):
             workflow_gate()
             try:
                 return workflow.start_run(graph, inputs)
@@ -1126,6 +1143,15 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                 raise HTTPException(status_code=503, detail={"state": "unavailable", "message": str(exc)}) from exc
             except Exception as exc:
                 raise HTTPException(status_code=500, detail=f"Could not start the workflow: {exc}") from exc
+
+        @app.post("/api/workflow/runs")
+        async def workflow_run(request: Request):
+            payload = await request.json()
+            graph = payload.get("graph") if isinstance(payload, dict) else None
+            if not isinstance(graph, dict):
+                raise HTTPException(status_code=400, detail="Request must contain a graph object.")
+            inputs = payload.get("inputs")
+            return start_workflow(graph, inputs if isinstance(inputs, list) else [])
 
         @app.get("/api/workflow/runs/{run_id}")
         def workflow_run_snapshot(run_id: str):
@@ -1270,14 +1296,14 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                     print(f"[Studio] run history persist failed: {exc}")
 
         @app.get("/api/tasks")
-        def list_tasks():
+        def list_tasks(summary: bool = False):
             """V4.5 audit P1: single registry for both task kinds - direct
             generation jobs and workflow runs - with a common shape, so the
             Queue page is one honest history instead of two silos."""
             tasks: list[dict[str, Any]] = []
             with _jobs_history_lock:
                 with jobs_lock:
-                    memory_jobs = {record.id: record.snapshot() for record in jobs.values()}
+                    memory_jobs = {record.id: record.snapshot(include_settings=False) for record in jobs.values()}
                 try:
                     disk_jobs = json.loads(_jobs_history_path().read_text(encoding="utf-8"))
                 except (OSError, ValueError):
@@ -1296,7 +1322,7 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                         "progress": snapshot.get("progress", 0),
                         "message": snapshot.get("message") or snapshot.get("prompt") or "",
                         "outputs": snapshot.get("generated_files") or [],
-                        "errors": [],
+                        "errors": snapshot.get("errors") or [],
                         "created_at": snapshot.get("created_at", 0),
                     })
             with _runs_history_lock:
@@ -1321,11 +1347,42 @@ class WanGPStudioPlugin(WAN2GPPlugin):
                         "outputs": run.get("outputs") or [],
                         "errors": run.get("errors") or [],
                         "has_graph": bool(run.get("graph")),
-                        "graph": run.get("graph"),
+                        **({} if summary else {"graph": run.get("graph")}),
                         "created_at": run.get("created_at", 0),
                     })
-            tasks.sort(key=lambda item: item.get("created_at", 0), reverse=True)
+            terminal = {"completed", "failed", "cancelled"}
+            tasks.sort(key=lambda item: (item["status"] not in terminal, item.get("created_at", 0)), reverse=True)
+            for task in tasks[:50]:
+                task["media"] = [
+                    {"id": media_id_for(path), "name": os.path.basename(path)}
+                    for path in task["outputs"] if isinstance(path, str) and path
+                ]
             return tasks[:50]
+
+        def _run_with_graph(task_id: str):
+            run = workflow.run_record(task_id)
+            if run is None:
+                with _runs_history_lock:
+                    try:
+                        disk = json.loads(_runs_history_path().read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        disk = []
+                if isinstance(disk, list):
+                    run = next((item for item in disk if isinstance(item, dict) and item.get("id") == task_id), None)
+            if not run or not isinstance(run.get("graph"), dict):
+                raise HTTPException(status_code=404, detail="Workflow snapshot is unavailable.")
+            return run
+
+        @app.get("/api/tasks/{task_id}/graph")
+        def task_graph(task_id: str):
+            return _run_with_graph(task_id)["graph"]
+
+        @app.post("/api/tasks/{task_id}/repeat")
+        def task_repeat(task_id: str):
+            run = _run_with_graph(task_id)
+            if run.get("status") not in {"completed", "failed", "cancelled"}:
+                raise HTTPException(status_code=409, detail="Wait for the active workflow to finish before repeating it.")
+            return start_workflow(run["graph"], run.get("inputs") or [])
 
         @app.get("/api/jobs")
         def list_jobs():

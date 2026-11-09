@@ -44,8 +44,8 @@ class StubGraphStore:
         return [(json.loads(path.read_text(encoding="utf-8")).get("name") or path.stem, path.stem)
                 for path in sorted(self.root.glob("*.json"))]
 
-    def save(self, graph, name):
-        path = self.root / f"{self.slug(name)}.json"
+    def save(self, graph, name, *, workflow_id=None):
+        path = self.root / f"{workflow_id or self.slug(name)}.json"
         path.write_text(json.dumps(graph), encoding="utf-8")
         return graph, path
 
@@ -129,11 +129,11 @@ def test_round_trip_export_import(tmp_path):
     assert exported["version"] == 1
 
     imported = compat.import_workflow(exported)
-    assert imported["id"] == "round-trip"
+    assert imported["id"]
     assert imported["legacy"] is False
     assert imported["unknown_nodes"] == []
     assert imported["node_count"] == 1
-    assert compat.load("round-trip")["nodes"][0]["type"] == "text_prompt"
+    assert compat.load(imported["id"])["nodes"][0]["type"] == "text_prompt"
 
 
 def test_legacy_v1_stage_workflow_is_migrated(tmp_path):
@@ -179,9 +179,9 @@ def test_comfyui_payload_imports_as_opaque(tmp_path):
         "1": {"class_type": "KSampler", "inputs": {"seed": 1, "model": ["5", 0]}},
         "5": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "m.safetensors"}},
     })
-    assert imported["id"] == "comfyui-import"
+    assert imported["id"]
     assert imported["unknown_nodes"] == ["comfyui_node"]
-    stored = compat.load("comfyui-import")
+    stored = compat.load(imported["id"])
     assert [node["type"] for node in stored["nodes"]] == ["comfyui_node", "comfyui_node"]
     sampler = [node for node in stored["nodes"] if node["params"]["comfyui"]["key"] == "1"][0]
     assert sampler["params"]["comfyui"]["inputs"]["model"] == ["5", 0]
@@ -230,7 +230,7 @@ def test_comfyui_ui_import_preserves_layout_and_values(tmp_path):
         pytest.skip("wanflow-ui not installed")
     compat = _compat(tmp_path)
     imported = compat.import_workflow(_ui_payload())
-    assert imported["id"] == "comfyui-ui-import"
+    assert imported["id"]
     assert imported["unknown_nodes"] == ["comfyui_node"]
     stored = compat.load(imported["id"])
     by_id = {node["id"]: node for node in stored["nodes"]}
@@ -270,7 +270,7 @@ def test_comfyui_ui_export_survives_edits(tmp_path):
             node["position"] = {"x": 650, "y": 240}
     graph["nodes"] = [node for node in graph["nodes"] if node["id"] != "c1"]
     graph["edges"] = []
-    compat.save(graph, imported["name"])
+    compat.save(graph, imported["name"], workflow_id=imported["id"])
 
     exported = compat.export_workflow(imported["id"], fmt="comfyui-ui")
     assert [spec["id"] for spec in exported["nodes"]] == [2]
@@ -290,13 +290,13 @@ def test_comfyui_ui_export_rebuilds_links_from_edges(tmp_path):
     imported = compat.import_workflow(_ui_payload())
 
     graph = compat.load(imported["id"])
-    compat.save(graph, imported["name"])
+    compat.save(graph, imported["name"], workflow_id=imported["id"])
     exported = compat.export_workflow(imported["id"], fmt="comfyui-ui")
     assert exported["links"] == [[1, 1, 0, 2, 0, "MODEL"]]
 
     graph = compat.load(imported["id"])
     graph["edges"][0]["type"] = "CONDITIONING"
-    compat.save(graph, imported["name"])
+    compat.save(graph, imported["name"], workflow_id=imported["id"])
     exported = compat.export_workflow(imported["id"], fmt="comfyui-ui")
     assert exported["links"] == [[2, 1, 0, 2, 0, "CONDITIONING"]]
     by_id = {node["id"]: node for node in exported["nodes"]}
@@ -327,7 +327,7 @@ def test_comfyui_ui_export_reads_legacy_per_node_metadata(tmp_path):
     ui_meta = graph["ui"].pop("comfyui_ui")
     for node in graph["nodes"]:
         node["params"]["comfyui"]["ui_meta"] = ui_meta
-    compat.save(graph, imported["name"])
+    compat.save(graph, imported["name"], workflow_id=imported["id"])
     exported = compat.export_workflow(imported["id"], fmt="comfyui-ui")
     assert exported["links"] == [[1, 1, 0, 2, 0, "MODEL"]]
     assert exported["nodes"][1]["inputs"][0]["link"] == 1
@@ -377,6 +377,29 @@ def _isolated_wanflow_root(tmp_path, monkeypatch):
     (target / "blocks").mkdir()
     monkeypatch.setenv("STUDIO_PLUGINS_ROOT", str(tmp_path / "plugins"))
     return target / "workflows"
+
+
+def test_workflows_with_same_name_keep_separate_ids(tmp_path, monkeypatch):
+    store = _isolated_wanflow_root(tmp_path, monkeypatch)
+    plugin = WanGPStudioPlugin()
+    plugin.server_config = {"workspaces_dir": str(tmp_path / "workspaces")}
+    graph = {"name": "Новый граф", "nodes": [], "edges": []}
+    base = "/api/workflow/workflows"
+
+    with TestClient(plugin.create_web_app()) as client:
+        first = client.post(base, json={"graph": graph})
+        second = client.post(base, json={"graph": graph})
+        assert first.status_code == second.status_code == 200
+        first_id, second_id = first.json()["id"], second.json()["id"]
+        assert first_id != second_id
+        updated = client.put(f"{base}/{first_id}", json={"graph": graph, "name": "Переименован"})
+        assert updated.status_code == 200
+        assert updated.json()["id"] == first_id
+
+    assert len(list(store.glob("*.json"))) == 2
+    with TestClient(plugin.create_web_app()) as client:
+        assert client.get(f"{base}/{first_id}").json()["name"] == "Переименован"
+        assert client.get(f"{base}/{second_id}").json()["name"] == "Новый граф"
 
 
 def test_export_import_routes_against_installed_plugin(tmp_path, monkeypatch):

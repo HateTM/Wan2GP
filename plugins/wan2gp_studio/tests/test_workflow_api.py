@@ -59,8 +59,8 @@ class StubGraphStore:
             out.append((str(data.get("name") or path.stem), path.stem))
         return out
 
-    def save(self, graph, name):
-        slug = self.slug(name)
+    def save(self, graph, name, *, workflow_id=None):
+        slug = workflow_id or self.slug(name)
         path = self.root / f"{slug}.json"
         path.write_text(json.dumps(graph), encoding="utf-8")
         return graph, path
@@ -169,16 +169,16 @@ def test_catalog_storage_and_validation_with_stub(tmp_path):
 
     assert compat.workflows() == []
     saved = compat.save(_graph(), "Test Flow")
-    assert saved["id"] == "test-flow"
-    assert [entry["id"] for entry in compat.workflows()] == ["test-flow"]
-    assert compat.load("test-flow")["name"] == "Test Flow"
+    assert saved["id"]
+    assert [entry["id"] for entry in compat.workflows()] == [saved["id"]]
+    assert compat.load(saved["id"])["name"] == "Test Flow"
 
     validation = compat.validate(_graph())
     assert validation["ok"] is True and validation["order"] == ["n1"]
     broken = compat.validate({"nodes": [], "edges": []})
     assert broken["ok"] is False
 
-    compat.delete("test-flow")
+    compat.delete(saved["id"])
     assert compat.workflows() == []
 
 

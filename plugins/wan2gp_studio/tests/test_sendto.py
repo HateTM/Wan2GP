@@ -224,6 +224,7 @@ def test_bridge_refuses_handoff_for_disabled_plugin(fake_plugins_root, tmp_path)
     assert status == "disabled"
     assert state == {}  # nothing was appended to any inbox
     assert registry.status(handoff.handoff_id) == "consumed"  # one-shot still holds
+    assert registry.delivery(handoff.handoff_id) == "disabled"
 
 
 # -- HTTP routes ---------------------------------------------------------------
@@ -266,7 +267,7 @@ def test_send_media_round_trip(client):
     assert inbox[0]["slot"] == "img2img"
     assert os.path.isfile(inbox[0]["path"])
 
-    assert api.get(f"/api/sendto/{handoff_id}").json()["status"] == "consumed"
+    assert api.get(f"/api/sendto/{handoff_id}").json() == {"status": "consumed", "delivery": "sent:img2img"}
     again_state, again = plugin._apply_sendto_handoff({}, handoff_id)
     assert again == "expired"
 

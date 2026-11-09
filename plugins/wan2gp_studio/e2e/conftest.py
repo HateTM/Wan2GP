@@ -62,6 +62,7 @@ def server_url(tmp_path_factory):
         "image_save_path": str(root / "images"),
         "save_path": str(root / "videos"),
         "audio_save_path": str(root / "audio"),
+        "workspaces_dir": str(root / "workspaces"),
     }
     # Workflow runs through the real worker need a session object; the e2e
     # harness has no live WanGP runtime, so the binding is a no-op stub.

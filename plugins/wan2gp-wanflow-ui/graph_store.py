@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -29,15 +30,23 @@ class GraphStore:
                 result.append((path.stem, path.stem))
         return result
 
-    def save(self, graph: dict[str, Any], name: str) -> tuple[dict[str, Any], Path]:
+    def save(self, graph: dict[str, Any], name: str, *, workflow_id: str | None = None) -> tuple[dict[str, Any], Path]:
         normalized = normalize_graph(graph)
         normalized["name"] = str(name or normalized.get("name") or "Workflow").strip()
-        slug = self.slug(normalized["name"])
+        slug = self.slug(normalized["name"]) if workflow_id is None else workflow_id
+        if not slug or slug in {".", ".."} or any(char in '/\\<>:"|?*' or ord(char) < 32 for char in slug):
+            raise ValueError("Invalid workflow ID.")
         normalized["updated_at"] = int(time.time())
         target = self.root / f"{slug}.json"
-        temporary = target.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(graph_for_json(normalized), indent=2, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(target)
+        with tempfile.NamedTemporaryFile(dir=self.root, suffix=".tmp", delete=False, mode="w", encoding="utf-8") as handle:
+            temporary = Path(handle.name)
+            try:
+                json.dump(graph_for_json(normalized), handle, indent=2, ensure_ascii=False)
+                handle.close()
+                temporary.replace(target)
+            finally:
+                handle.close()
+                temporary.unlink(missing_ok=True)
         return normalized, target
 
     def _resolve(self, value: str) -> Path:

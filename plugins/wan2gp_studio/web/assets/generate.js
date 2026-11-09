@@ -138,16 +138,19 @@
   }
 
   async function selectModel(modelType) {
+    const request = Symbol();
+    state.modelRequest = request;
     state.selectedModel = modelType;
+    state.detail = null;
     renderModels();
     $("generate-empty").hidden = true;
-    $("generate-editor").hidden = false;
+    $("generate-editor").hidden = true;
     $("generate-submit").disabled = true;
     $("generate-state").textContent = "Loading model definition…";
     $("generate-model-state").textContent = "…";
     try {
       const detail = await S.api("api/models/" + encodeURIComponent(modelType));
-      if (state.selectedModel !== modelType) return;
+      if (state.modelRequest !== request) return;
       state.detail = detail;
       const model = detail.model || {};
       $("generate-model-title").textContent = model.name || modelType;
@@ -159,10 +162,11 @@
       renderPresets(detail);
       renderInputSlots(detail);
       renderAdvancedAttachments();
+      $("generate-editor").hidden = false;
       $("generate-state").textContent = "Native WanGP defaults loaded";
       $("generate-submit").disabled = false;
     } catch (error) {
-      if (state.selectedModel !== modelType) return;
+      if (state.modelRequest !== request) return;
       $("generate-state").textContent = "Could not load model";
       $("generate-model-state").textContent = "error";
       S.toast(error.message, true);
@@ -172,24 +176,26 @@
   async function loadPreset() {
     if (!state.selectedModel || !$("generate-preset").value) return;
     const modelType = state.selectedModel;
+    const modelRequest = state.modelRequest;
     $("generate-load-preset").disabled = true;
     try {
       const settings = await S.api("api/models/" + encodeURIComponent(modelType) +
         "/settings?setting_id=" + encodeURIComponent($("generate-preset").value));
-      if (state.selectedModel !== modelType) return;
+      if (state.modelRequest !== modelRequest) return;
       $("generate-prompt").value = settings.prompt || "";
       $("generate-negative").value = settings.negative_prompt || "";
       $("generate-settings-json").value = JSON.stringify(settings, null, 2);
       $("generate-state").textContent = "Preset loaded · edits are local until submitted";
     } catch (error) {
-      S.toast(error.message, true);
+      if (state.modelRequest === modelRequest) S.toast(error.message, true);
     } finally {
-      if (state.selectedModel === modelType) $("generate-load-preset").disabled = !$("generate-preset").value;
+      if (state.modelRequest === modelRequest) $("generate-load-preset").disabled = !$("generate-preset").value;
     }
   }
 
   async function submit() {
-    if (!state.selectedModel) return;
+    if (!state.detail || $("generate-submit").disabled) return;
+    const detail = state.detail;
     let settings;
     try {
       settings = JSON.parse($("generate-settings-json").value || "{}");
@@ -210,12 +216,14 @@
     try {
       await S.api("api/jobs", { method: "POST", body: JSON.stringify({ settings }) });
       S.toast("Task submitted to the native WanGP queue.");
-      $("generate-state").textContent = "Submitted · watch progress in Queue";
-      S.setView("queue");
+      if (state.detail === detail && S.getView() === "generate") {
+        $("generate-state").textContent = "Submitted · watch progress in Queue";
+        S.setView("queue");
+      } else S.refreshTasks();
     } catch (error) {
       S.toast(error.message, true);
     } finally {
-      $("generate-submit").disabled = false;
+      if (state.detail === detail) $("generate-submit").disabled = false;
     }
   }
 
@@ -236,7 +244,6 @@
     });
     $("generate-load-preset").addEventListener("click", loadPreset);
     $("generate-submit").addEventListener("click", submit);
-    $("generate-run").addEventListener("click", submit);
     $("generate-format-json").addEventListener("click", () => {
       try {
         $("generate-settings-json").value = JSON.stringify(JSON.parse($("generate-settings-json").value), null, 2);

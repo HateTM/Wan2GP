@@ -18,8 +18,21 @@
   const nodeById = id => graph.nodes.find(node => node.id === id);
   const groupById = id => graph.groups.find(group => group.id === id);
   const groupForNode = id => graph.groups.find(group => (group.node_ids||[]).includes(id));
-  function selectNode(id, additive=false){selectedGroup=null;if(additive){selectedNodes=selectedNodes.includes(id)?selectedNodes.filter(value=>value!==id):[...selectedNodes,id];}else{selectedNodes=[id];}selected=selectedNodes[0]||null;}try{const node=graph.nodes.find(item=>item.id===selected);window.parent.postMessage({type:'WAN2GP_WORKFLOWS_V2',action:'node_selected',node:node?{id:node.id,type:node.type,title:node.title,params:node.params}:null},'*');}catch(e){}
-  function selectGroup(id){selectedGroup=id;selected=null;selectedNodes=[];}
+  function selectNode(id, additive = false) {
+    const previous = selected;
+    selectedGroup = null;
+    if (id === null) selectedNodes = [];
+    else if (additive) {
+      selectedNodes = selectedNodes.includes(id) ? selectedNodes.filter(value => value !== id) : [...selectedNodes, id];
+    } else selectedNodes = [id];
+    selected = selectedNodes[0] || null;
+    if (id === null || selected !== previous) notifyNodeSelected();
+  }
+  function notifyNodeSelected() {
+    const node = nodeById(selected);
+    window.parent.postMessage({type:'WAN2GP_WORKFLOWS_V2', action:'node_selected', node:node || null}, '*');
+  }
+  function selectGroup(id){selectNode(null);selectedGroup=id;}
   const modelById = id => catalog.models.find(model => model.model_type === id);
   const generationTypes = ['generate_image','edit_image','inpaint_image','generate_video','edit_video','inpaint_video','generate_audio'];
   const typeClass = type => String(type || 'MEDIA').replace(/[^A-Za-z0-9_]/g, '');
@@ -146,7 +159,7 @@
   function uid(){return `n${Date.now().toString(36)}${Math.random().toString(36).slice(2,8)}`;}
   function clone(value){return JSON.parse(JSON.stringify(value));}
   function emit(action){
-    window.parent.postMessage({type:'WAN2GP_WORKFLOWS_V2', action, graph:clone(graph)}, '*');
+    window.parent.postMessage({type:'WAN2GP_WORKFLOWS_V2', action, graph:action==='save'?undefined:clone(graph)}, '*');
   }
   function incomingEdge(nodeId,port){return graph.edges.find(edge=>edge.target?.node===nodeId&&edge.target?.port===port);}
   function groupRect(group){
@@ -300,11 +313,11 @@
   function portHtml(node,port){const c=typeClass(port.type);return `<div class="port ${port.direction}" data-node="${escapeAttr(node.id)}" data-port="${escapeAttr(port.name)}" data-type="${escapeAttr(port.type)}"><span class="dot ${c}"></span><span>${escapeHtml(port.label||port.name)}</span></div>`;}
   function drawEdges(){
     const svg=$('edges'), viewport=$('viewport'), rect=viewport.getBoundingClientRect(); svg.innerHTML=''; svg.setAttribute('viewBox',`0 0 ${rect.width} ${rect.height}`);
-    graph.edges.forEach(edge=>{const a=findPortElement(edge.source.node,edge.source.port),b=findPortElement(edge.target.node,edge.target.port);if(!a||!b)return;const p1=center(a),p2=center(b),dx=Math.max(45,Math.abs(p2.x-p1.x)*.45);const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',`M ${p1.x} ${p1.y} C ${p1.x+dx} ${p1.y}, ${p2.x-dx} ${p2.y}, ${p2.x} ${p2.y}`);path.setAttribute('class',`edge ${typeClass(edge.type)}${edge.id===selectedEdge?' selected':''}`);path.style.pointerEvents='stroke';path.dataset.edgeId=edge.id;path.addEventListener('pointerdown',event=>{event.stopPropagation();selectedEdge=edge.id;selected=null;pending=null;render();});svg.appendChild(path);});
+    graph.edges.forEach(edge=>{const a=findPortElement(edge.source.node,edge.source.port),b=findPortElement(edge.target.node,edge.target.port);if(!a||!b)return;const p1=center(a),p2=center(b),dx=Math.max(45,Math.abs(p2.x-p1.x)*.45);const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',`M ${p1.x} ${p1.y} C ${p1.x+dx} ${p1.y}, ${p2.x-dx} ${p2.y}, ${p2.x} ${p2.y}`);path.setAttribute('class',`edge ${typeClass(edge.type)}${edge.id===selectedEdge?' selected':''}`);path.style.pointerEvents='stroke';path.dataset.edgeId=edge.id;path.addEventListener('pointerdown',event=>{event.stopPropagation();selectNode(null);selectedEdge=edge.id;pending=null;render();});svg.appendChild(path);});
   }
   function startNodeDrag(event,node,element){if(event.target.closest('.node-toggle'))return;event.preventDefault();if(!selectedNodes.includes(node.id))selectNode(node.id,event.shiftKey);selectedEdge=null;const moving=selectedNodes.map(id=>nodeById(id)).filter(Boolean);dragging={nodes:moving,startX:event.clientX,startY:event.clientY,positions:moving.map(item=>({node:item,x:item.position.x,y:item.position.y}))};element.setPointerCapture?.(event.pointerId);renderInspector();}
   function startGroupDrag(event,group,element){if(event.target.closest('.group-toggle'))return;event.preventDefault();selectGroup(group.id);const moving=(group.node_ids||[]).map(nodeById).filter(Boolean);dragging={nodes:moving,startX:event.clientX,startY:event.clientY,positions:moving.map(item=>({node:item,x:item.position.x,y:item.position.y}))};element.setPointerCapture?.(event.pointerId);renderInspector();}
-  function portDown(event,node,port){event.stopPropagation();selectedEdge=null;const name=port.dataset.port,def=portDef(node,name);if(def.direction==='out'){pending={node:node.id,port:name,type:def.type};selected=node.id;return;}if(pending){const target=def;if(compatible(pending.type,target.type)){graph.edges=graph.edges.filter(edge=>!(edge.target.node===node.id&&edge.target.port===name&&!target.variadic));graph.edges.push({id:uid(),source:{node:pending.node,port:pending.port},target:{node:node.id,port:name},type:pending.type});}pending=null;render();}}
+  function portDown(event,node,port){event.stopPropagation();selectedEdge=null;const name=port.dataset.port,def=portDef(node,name);if(def.direction==='out'){pending={node:node.id,port:name,type:def.type};selectNode(node.id);return;}if(pending){const target=def;if(compatible(pending.type,target.type)){graph.edges=graph.edges.filter(edge=>!(edge.target.node===node.id&&edge.target.port===name&&!target.variadic));graph.edges.push({id:uid(),source:{node:pending.node,port:pending.port},target:{node:node.id,port:name},type:pending.type});}pending=null;render();}}
   function compatible(a,b){a=portBase(a);b=portBase(b);return a===b||a==='MEDIA'||b==='MEDIA';}
   function renderLegacyInspector(){const node=nodeById(selected), host=$('inspector'), empty=$('inspectorEmpty');if(!node){empty.style.display='block';host.innerHTML='';return;}empty.style.display='none';const p=node.params||{};const models=catalog.models.filter(model=>{const output=String((model.capabilities?.main_output||[])[0]||'').toLowerCase();return node.type.includes('image')?output==='image':node.type.includes('audio')?output==='audio':node.type.includes('video')?output==='video':true;});host.innerHTML=`<label>Title</label><input id="editTitle" value="${escapeAttr(node.title)}"><label>Model / finetune</label><select id="editModel"><option value="">Select model</option>${models.map(model=>`<option value="${escapeAttr(model.model_type)}" ${model.model_type===p.model_type?'selected':''}>${escapeHtml(model.name||model.model_type)}</option>`).join('')}</select><label>Prompt</label><textarea id="editPrompt">${escapeHtml(p.prompt||'')}</textarea><label>Negative prompt</label><textarea id="editNegative">${escapeHtml(p.negative_prompt||'')}</textarea><div class="row"><div><label>Seed</label><input id="editSeed" type="number" value="${escapeAttr(p.seed??-1)}"></div><div><label>Frames</label><input id="editFrames" type="number" value="${escapeAttr(p.video_length??81)}"></div></div><label>Processor / method</label><select id="editProcess"><option value="">Select</option>${(catalog.processes||[]).map(item=>`<option value="${escapeAttr(item.id)}" ${item.id===p.process_id?'selected':''}>${escapeHtml(item.label)}</option>`).join('')}</select><label>Native settings JSON</label><textarea id="editRaw">${escapeHtml(JSON.stringify(p.settings||{},null,2))}</textarea><div class="hint">Advanced model properties are preserved here even when a model adds a field the editor does not know yet.</div>`;
     const update=()=>{node.title=$('editTitle').value;node.params=p; p.model_type=$('editModel').value; p.prompt=$('editPrompt').value;p.negative_prompt=$('editNegative').value;p.seed=Number($('editSeed').value);p.video_length=Number($('editFrames').value);p.process_id=$('editProcess').value;const process=(catalog.processes||[]).find(item=>item.id===p.process_id);if(process){p.process_type=process.type;p.method=process.id;}else if(!p.process_id){delete p.process_type;delete p.method;}try{p.settings=JSON.parse($('editRaw').value||'{}');delete p.warning;}catch(error){p.warning='Native settings JSON is invalid.';}render();};
@@ -534,24 +547,66 @@
     bind(['editTitle','editRaw'],update);
   }
 
-  function applyNodeSettings(data){if(!selected)return;const node=graph.nodes.find(item=>item.id===selected);if(!node)return;node.params=node.params||{};if(typeof data.prompt==='string')node.params.prompt=data.prompt;if(data.model_type)node.params.model_type=data.model_type;if(data.settings&&typeof data.settings==='object'){node.params.settings=Object.assign({},node.params.settings||{},data.settings);}if(data.params&&typeof data.params==='object'){node.params=Object.assign({},node.params,data.params);}render();}
+  function applyNodeSettings(data) {
+    const node = nodeById(selected);
+    if (!node || node.id !== data.nodeId) return false;
+    if (data.params) node.params = data.params;
+    else {
+      node.params = node.params || {};
+      if (typeof data.prompt === 'string') node.params.prompt = data.prompt;
+      if (data.model_type) node.params.model_type = data.model_type;
+      if (data.settings) node.params.settings = data.settings;
+    }
+    render();
+    return true;
+  }
   function addMediaNode(kind,path){const type={image:'input_image',video:'input_video',audio:'input_audio'}[kind];if(!type)return;const index=graph.nodes.length;const node={id:uid(),type,title:(catalog.nodes.find(item=>item.type===type)||{}).label||type,position:{x:120+(index%4)*280,y:80+Math.floor(index/4)*190},params:{path:String(path||'')},ui:{},enabled:true};graph.nodes.push(node);selectNode(node.id);selectedEdge=null;fit();render();}
   function addNode(type){const index=graph.nodes.length;const node={id:uid(),type,title:(catalog.nodes.find(item=>item.type===type)||{}).label||type,position:{x:120+(index%4)*280,y:80+Math.floor(index/4)*190},params:{},ui:{},enabled:true};if(type.startsWith('generate')||type.startsWith('edit_')||type.startsWith('inpaint_'))node.params.settings={};if(type==='text')node.params.text='';if(type==='ai_analyze'){node.params.instruction='';node.params.model=3;node.params.max_tokens=192;node.params.output_name='analysis';}if(type==='prompt_enhancer'){node.params.target_media='';node.params.model_type='';node.params.mode='';node.params.seed=-1;node.params.output_name='enhanced_prompt';}if(type==='resolution_config')node.params.resolution_tier='auto';if(type==='lora_stack')node.params.activated_loras=[];graph.nodes.push(node);selectNode(node.id);selectedEdge=null;render();}
   function createGroup(){const ids=[...selectedNodes];if(!ids.length&&selected)ids.push(selected);if(!ids.length)return;const colors=['#395b78','#6b4f8a','#39785f','#89633d','#82506a'];const group={id:uid(),title:`Group ${graph.groups.length+1}`,color:colors[graph.groups.length%colors.length],node_ids:ids,enabled:true};graph.groups.push(group);selectGroup(group.id);render();}
-  function insertBlock(blockId){const block=(catalog.blocks||[]).find(item=>item.id===blockId);if(!block)return;const nodes=block.nodes||[], idMap={};const minX=Math.min(...nodes.map(node=>Number(node.position?.x||0)),0),minY=Math.min(...nodes.map(node=>Number(node.position?.y||0)),0),offsetX=180-minX+(graph.nodes.length%3)*30,offsetY=100-minY+(graph.nodes.length%3)*30;const clones=nodes.map(raw=>{const node=clone(raw);idMap[node.id]=uid();node.id=idMap[node.id];node.position={x:Number(node.position?.x||0)+offsetX,y:Number(node.position?.y||0)+offsetY};node.enabled=node.enabled!==false;return node;});graph.nodes.push(...clones);graph.edges.push(...(block.edges||[]).map(raw=>{const edge=clone(raw);edge.id=uid();edge.source.node=idMap[edge.source.node]||edge.source.node;edge.target.node=idMap[edge.target.node]||edge.target.node;return edge;}));const sourceGroup=(block.groups||[])[0];if(sourceGroup){const group=clone(sourceGroup);group.id=uid();group.node_ids=(group.node_ids||[]).map(id=>idMap[id]).filter(Boolean);graph.groups.push(group);selectGroup(group.id);}else{selectedNodes=clones.map(node=>node.id);selected=selectedNodes[0]||null;}selectedEdge=null;render();}
+  function insertBlock(blockId){const block=(catalog.blocks||[]).find(item=>item.id===blockId);if(!block)return;const nodes=block.nodes||[], idMap={};const minX=Math.min(...nodes.map(node=>Number(node.position?.x||0)),0),minY=Math.min(...nodes.map(node=>Number(node.position?.y||0)),0),offsetX=180-minX+(graph.nodes.length%3)*30,offsetY=100-minY+(graph.nodes.length%3)*30;const clones=nodes.map(raw=>{const node=clone(raw);idMap[node.id]=uid();node.id=idMap[node.id];node.position={x:Number(node.position?.x||0)+offsetX,y:Number(node.position?.y||0)+offsetY};node.enabled=node.enabled!==false;return node;});graph.nodes.push(...clones);graph.edges.push(...(block.edges||[]).map(raw=>{const edge=clone(raw);edge.id=uid();edge.source.node=idMap[edge.source.node]||edge.source.node;edge.target.node=idMap[edge.target.node]||edge.target.node;return edge;}));const sourceGroup=(block.groups||[])[0];if(sourceGroup){const group=clone(sourceGroup);group.id=uid();group.node_ids=(group.node_ids||[]).map(id=>idMap[id]).filter(Boolean);graph.groups.push(group);selectGroup(group.id);}else{selectedNodes=clones.map(node=>node.id);selected=selectedNodes[0]||null;notifyNodeSelected();}selectedEdge=null;render();}
   function saveSelectedBlock(){const group=groupById(selectedGroup);if(!group)return;graph.ui=graph.ui||{};graph.ui.selected_group_id=group.id;emit('save_block');}
   function deleteBlock(blockId){const block=(catalog.blocks||[]).find(item=>item.id===blockId);if(!block)return;if(pendingDeleteBlockId!==blockId){pendingDeleteBlockId=blockId;renderPalette();return;}pendingDeleteBlockId=null;graph.ui=graph.ui||{};graph.ui.selected_block_id=blockId;emit('delete_block');}
   function ungroup(){if(!selectedGroup)return;graph.groups=graph.groups.filter(group=>group.id!==selectedGroup);selectedGroup=null;render();}
-  function deleteSelection(){if(selectedEdge){graph.edges=graph.edges.filter(edge=>edge.id!==selectedEdge);selectedEdge=null;render();return;}const ids=new Set(selectedNodes.length?selectedNodes:(selected?[selected]:[]));if(!ids.size)return;graph.nodes=graph.nodes.filter(node=>!ids.has(node.id));graph.edges=graph.edges.filter(edge=>!ids.has(edge.source.node)&&!ids.has(edge.target.node));graph.groups=graph.groups.map(group=>({...group,node_ids:(group.node_ids||[]).filter(id=>!ids.has(id))})).filter(group=>group.node_ids.length);selected=null;selectedNodes=[];render();}
+  function deleteSelection(){if(selectedEdge){graph.edges=graph.edges.filter(edge=>edge.id!==selectedEdge);selectedEdge=null;render();return;}const ids=new Set(selectedNodes.length?selectedNodes:(selected?[selected]:[]));if(!ids.size)return;graph.nodes=graph.nodes.filter(node=>!ids.has(node.id));graph.edges=graph.edges.filter(edge=>!ids.has(edge.source.node)&&!ids.has(edge.target.node));graph.groups=graph.groups.map(group=>({...group,node_ids:(group.node_ids||[]).filter(id=>!ids.has(id))})).filter(group=>group.node_ids.length);selectNode(null);render();}
   function fit(){if(!graph.nodes.length)return;const xs=graph.nodes.map(n=>n.position.x),ys=graph.nodes.map(n=>n.position.y);pan={x:Math.max(0,120-Math.min(...xs)),y:Math.max(0,80-Math.min(...ys))};scale=1;applyView();}
   function applyView(){ $('canvas').style.transform=`translate(${pan.x}px,${pan.y}px) scale(${scale})`;drawEdges(); }
-  window.addEventListener('message',event=>{const data=event?.data;if(!data||data.type!=='WAN2GP_WORKFLOWS_V2'||event.source!==window.parent)return;if(data.action==='get_graph'){window.parent.postMessage({type:'WAN2GP_WORKFLOWS_V2',action:'graph',request_id:data.request_id,graph:clone(graph)},'*');}if(data.action==='add_media'){addMediaNode(data.kind,data.path);}if(data.action==='apply_node_settings'){applyNodeSettings(data);}if(data.action==='load_graph'){graph=data.graph?data.graph:graph;selectedNodes=[];selectedEdge=null;fit();render();}if(data.action==='runtime_previews'){runtimePreviews=Array.isArray(data.previews)?data.previews:[];render();}if(data.action==='node_status'){executionState=data.status&&typeof data.status==='object'?data.status:{nodes:{}};render();}});
+  window.addEventListener('message', event => {
+    const data = event.data;
+    if (!data || data.type !== 'WAN2GP_WORKFLOWS_V2' || event.source !== window.parent) return;
+    if (data.action === 'get_graph') {
+      const current = !data.update || applyNodeSettings(data.update) ? clone(graph) : null;
+      window.parent.postMessage({type:'WAN2GP_WORKFLOWS_V2', action:'graph', request_id:data.request_id, graph:current}, '*');
+    }
+    if (data.action === 'rename_graph') graph.name = data.name;
+    if (data.action === 'add_media') addMediaNode(data.kind, data.path);
+    if (data.action === 'load_graph') {
+      graph = data.graph || graph;
+      selectNode(null);
+      selectedEdge = null;
+      fit();
+      render();
+    }
+    if (data.action === 'runtime_previews') {
+      runtimePreviews = Array.isArray(data.previews) ? data.previews : [];
+      render();
+    }
+    if (data.action === 'node_status') {
+      executionState = data.status && typeof data.status === 'object' ? data.status : {nodes:{}};
+      render();
+    }
+  });
   function escapeHtml(value){return String(value??'').replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));}
   function escapeAttr(value){return escapeHtml(value);}
-  document.addEventListener('click',event=>{const action=event.target.closest('[data-action]')?.dataset.action;if(!action)return;if(action==='add')addNode(event.target.closest('[data-action]').dataset.node);if(action==='add-block')insertBlock(event.target.closest('[data-action]').dataset.blockId);if(action==='delete-block')deleteBlock(event.target.closest('[data-action]').dataset.blockId);if(action==='group')createGroup();if(action==='save-block')saveSelectedBlock();if(action==='ungroup')ungroup();if(action==='save'||action==='run')emit(action);if(action==='fit')fit();if(action==='delete')deleteSelection();});
+  document.addEventListener('click',event=>{const action=event.target.closest('[data-action]')?.dataset.action;if(!action)return;if(action==='add')addNode(event.target.closest('[data-action]').dataset.node);if(action==='add-block')insertBlock(event.target.closest('[data-action]').dataset.blockId);if(action==='delete-block')deleteBlock(event.target.closest('[data-action]').dataset.blockId);if(action==='group')createGroup();if(action==='save-block')saveSelectedBlock();if(action==='ungroup')ungroup();if(action==='fit')fit();if(action==='delete')deleteSelection();});
   $('nodeSearch').addEventListener('input',renderPalette);$('viewport').addEventListener('pointerdown',event=>{if(event.button!==0||event.target.closest?.('.node,.port,.edge'))return;panning={x:event.clientX,y:event.clientY,px:pan.x,py:pan.y};$('viewport').setPointerCapture?.(event.pointerId);$('viewport').classList.add('dragging');});
   window.addEventListener('pointermove',event=>{if(dragging){const dx=(event.clientX-dragging.startX)/scale,dy=(event.clientY-dragging.startY)/scale;dragging.positions.forEach(item=>{item.node.position.x=item.x+dx;item.node.position.y=item.y+dy;const element=document.querySelector(`[data-node-id="${CSS.escape(item.node.id)}"]`);if(element){element.style.left=`${item.node.position.x}px`;element.style.top=`${item.node.position.y}px`;}});updateGroupGeometry();drawEdges();}else if(panning){pan.x=panning.px+event.clientX-panning.x;pan.y=panning.py+event.clientY-panning.y;applyView();}});window.addEventListener('pointerup',()=>{dragging=null;panning=null;$('viewport').classList.remove('dragging');});
   $('viewport').addEventListener('wheel',event=>{event.preventDefault();scale=Math.max(.45,Math.min(2.2,scale*(event.deltaY<0?1.08:.92)));applyView();},{passive:false});
-  window.addEventListener('keydown',event=>{if((event.key==='Delete'||event.key==='Backspace')&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName))deleteSelection();if(event.key.toLowerCase()==='g'&&(event.ctrlKey||event.metaKey)){event.preventDefault();createGroup();}if(event.key==='Escape'){pending=null;selectedEdge=null;render();}});
+  window.addEventListener('keydown',event=>{if((event.key==='Delete'||event.key==='Backspace')&&!['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName))deleteSelection();if(event.key.toLowerCase()==='g'&&(event.ctrlKey||event.metaKey)){event.preventDefault();createGroup();}if(event.key==='Escape'){pending=null;selectedEdge=null;selectNode(null);render();}if(event.key.toLowerCase()==='s'&&(event.ctrlKey||event.metaKey)){event.preventDefault();emit('save');}});
+  $('viewport').addEventListener('click', event => {
+    if (event.target.closest('.node,.port,.edge,.graph-group')) return;
+    selectNode(null);
+    selectedEdge = null;
+    render();
+  });
   renderPalette();render();if(window.W2GP_STATUS)$('status').textContent=window.W2GP_STATUS;
 })();
