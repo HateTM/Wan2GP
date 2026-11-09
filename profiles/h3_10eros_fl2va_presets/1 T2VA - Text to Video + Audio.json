@@ -1,0 +1,9 @@
+{
+    "guidance_scale": 1.0,
+    "guidance_phases": 1,
+    "sample_solver": "res_multistep",
+    "image_prompt_type": "",
+    "audio_prompt_type": "",
+    "video_prompt_type": "",
+    "help": "Video and synchronized audio from the text prompt only. Prompt Enhancer (Write button) mode: 'H3 NSFW Prompt from Text'."
+}

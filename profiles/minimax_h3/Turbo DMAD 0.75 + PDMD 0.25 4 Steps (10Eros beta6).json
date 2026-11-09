@@ -1,0 +1,12 @@
+{
+    "activated_loras": [
+        "minimax_h3_DMAD_4step_full_lora_avg_rank_39_bf16.safetensors",
+        "minimax_h3_pdmd_4step_lora_avg_rank_57_bf16.safetensors"
+    ],
+    "loras_multipliers": "0.75 0.25",
+    "num_inference_steps": 4,
+    "guidance_scale": 1,
+    "flow_shift": 10,
+    "sample_solver": "res_multistep",
+    "skip_steps_cache_type": ""
+}

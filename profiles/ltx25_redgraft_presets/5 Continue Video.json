@@ -1,0 +1,7 @@
+{
+    "num_inference_steps": 8,
+    "image_prompt_type": "V",
+    "audio_prompt_type": "",
+    "video_prompt_type": "",
+    "help": "Extend an existing video following the new prompt."
+}

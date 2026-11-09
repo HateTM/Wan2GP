@@ -1,0 +1,13 @@
+{
+    "guidance_scale": 1.0,
+    "guidance_phases": 1,
+    "sample_solver": "res_multistep",
+    "image_prompt_type": "S",
+    "audio_prompt_type": "",
+    "video_prompt_type": "",
+    "help": "Animate the Start Image with audio; the face/identity of the start frame is kept. Prompt Enhancer (Write button) mode: 'H3 NSFW Prompt from Text + image' (I2VA). + Mystic XXX v4 LoRA at 0.4 (recommended 0.2-0.6 on top of 10Eros; author: add a concept LoRA for t2v and some i2v).",
+    "activated_loras": [
+        "MysticXXX_MMH3-V4.safetensors"
+    ],
+    "loras_multipliers": "0.4"
+}

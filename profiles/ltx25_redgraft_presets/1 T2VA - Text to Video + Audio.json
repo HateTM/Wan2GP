@@ -1,0 +1,7 @@
+{
+    "num_inference_steps": 8,
+    "image_prompt_type": "",
+    "audio_prompt_type": "",
+    "video_prompt_type": "",
+    "help": "Video and soundtrack from the text prompt only. Prompt Enhancer (Write button) mode: 'Enhanced Prompt using existing Text Prompt' (LTX NSFW T2V)."
+}

@@ -1,0 +1,7 @@
+{
+    "num_inference_steps": 8,
+    "image_prompt_type": "S",
+    "audio_prompt_type": "A",
+    "video_prompt_type": "",
+    "help": "Animate the Start Image driven by your Audio Prompt (speech/music), which is kept as output audio."
+}

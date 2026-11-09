@@ -1,0 +1,7 @@
+{
+    "num_inference_steps": 8,
+    "image_prompt_type": "SE",
+    "audio_prompt_type": "",
+    "video_prompt_type": "",
+    "help": "Transition from the Start Image to the End Image with audio. Prompt Enhancer (Write button) mode: 'First/Last Frame Transition Prompt' (FL2VA)."
+}

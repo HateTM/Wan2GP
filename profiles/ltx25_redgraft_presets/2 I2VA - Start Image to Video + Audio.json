@@ -1,0 +1,7 @@
+{
+    "num_inference_steps": 8,
+    "image_prompt_type": "S",
+    "audio_prompt_type": "",
+    "video_prompt_type": "",
+    "help": "Animate the Start Image with generated audio; identity of the start frame is kept. Prompt Enhancer (Write button) mode: '... and image' (LTX NSFW I2V)."
+}

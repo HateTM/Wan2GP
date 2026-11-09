@@ -1,0 +1,7 @@
+{
+    "num_inference_steps": 10,
+    "guidance_scale": 0,
+    "video_prompt_type": "KI",
+    "remove_background_images_ref": 0,
+    "help": "Reference 1 = scene, reference 2 = person. Prompt: 'Place the person from image 2 into the scene of image 1; preserve their face and clothing, match the scene lighting.'"
+}
