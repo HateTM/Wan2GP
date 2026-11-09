@@ -1,6 +1,8 @@
 # Copyright (c) 2026 DeepBeepMeep - part of WanGP, WanGP Community License 2.0 (see LICENSE.txt)
 from __future__ import annotations
 
+import os
+
 from typing import Any
 
 
@@ -242,7 +244,11 @@ def qwen_download_defs(spec, backend, speculative_decoding=False):
     defs = []
     if spec["root_repo"] == spec["gguf_repo"]:
         if checkpoint_folder != folder:
-            defs.append(_files(spec["gguf_repo"], checkpoint_folder, [filename], spec["assets_dir_name"]))
+            definition = _files(spec["gguf_repo"], checkpoint_folder, [filename], spec["assets_dir_name"])
+            # weights installed beside the tokenizer (the assets folder itself, as downloads used to place them) satisfy the file too
+            canonical = os.path.join(spec["assets_dir_name"], checkpoint_folder, filename)
+            definition["extraRelPaths"] = {canonical: [os.path.join(spec["assets_dir_name"], filename)]}
+            defs.append(definition)
         shared_files.append(spec["vision_filename"])
         if checkpoint_folder == folder:
             shared_files.append(filename)

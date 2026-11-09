@@ -149,6 +149,7 @@ def _resolve_qwen35_checkpoint_file(
     filename: str,
     variant: str | None = None,
     error_if_none: bool = True,
+    repo_subfolder: str | None = None,
 ) -> str | None:
     del variant
     if assets_dir is None:
@@ -156,6 +157,13 @@ def _resolve_qwen35_checkpoint_file(
     # the downloads' relative path (folder/file) in the first root that has it, so that a model's files may be spread over the roots
     resolved = fl.locate_file(filename, error_if_none=False) or fl.locate_file(os.path.join(os.path.basename(os.path.normpath(assets_dir)), filename), error_if_none=False) \
         or fl.locate_file(filename, error_if_none=False, extra_paths=[assets_dir])
+    if resolved is None and repo_subfolder:
+        # GGUF downloads nest the repo's subfolder inside the assets folder (e.g. the 9B Heretic checkpoint that shares
+        # the Qwen3.5 assets with the 27B's subfolder)
+        resolved = fl.locate_file(
+            os.path.join(os.path.basename(os.path.normpath(assets_dir)), repo_subfolder, filename),
+            error_if_none=False,
+        )
     if resolved is not None:
         return resolved
     fallback_path = os.path.join(assets_dir, filename)
@@ -248,7 +256,7 @@ def _load_qwen35_image_processor(assets_dir: str):
 def get_qwen35_text_gguf_path(assets_dir: str, variant: str | None = None, backend: str = enhancer_quantization_GGUF) -> str:
     spec = get_qwen35_variant_spec(variant)
     filename = _get_qwen35_gguf_filename(spec, get_qwen35_quantization(backend, variant=variant))
-    return _resolve_qwen35_checkpoint_file(assets_dir, filename, variant=variant, error_if_none=False)
+    return _resolve_qwen35_checkpoint_file(assets_dir, filename, variant=variant, error_if_none=False, repo_subfolder=spec.get("gguf_repo_subfolder"))
 
 
 def _build_qwen35_vl_gguf_preprocess_sd(patch_shape):

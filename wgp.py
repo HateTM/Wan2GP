@@ -3935,10 +3935,10 @@ def get_loras_preprocessor(transformer, model_type):
     return preprocessor_wrapper    
 
 
-def process_files_def(repoId = None, sourceFolderList = None, fileList = None, targetFolderList = None, gen=None, show_filename=True):
+def process_files_def(repoId = None, sourceFolderList = None, fileList = None, targetFolderList = None, gen=None, show_filename=True, extraRelPaths=None):
     from shared.utils.download import process_files_def as shared_process_files_def
 
-    return shared_process_files_def(repoId=repoId, sourceFolderList=sourceFolderList, fileList=fileList, targetFolderList=targetFolderList, gen=gen, show_filename=show_filename)
+    return shared_process_files_def(repoId=repoId, sourceFolderList=sourceFolderList, fileList=fileList, targetFolderList=targetFolderList, gen=gen, show_filename=show_filename, extraRelPaths=extraRelPaths)
 
 def release_flashvsr_vram():
     upsampler_api.require_upsampler_by_method("flashvsr").release_vram()

@@ -181,7 +181,22 @@ def create_progress_hook(filename):
     return hook
 
 
-def process_files_def(repoId=None, sourceFolderList=None, fileList=None, targetFolderList=None, gen=None, show_filename=True):
+def _rel_path_alternates(download_def, rel_path):
+    # manually installed weights may sit at a path the runtime resolves but this def does not declare (e.g. a model's
+    # assets folder instead of the repo's source subfolder): those copies satisfy the file as well
+    alternates = (download_def or {}).get("extraRelPaths") or {}
+    return alternates.get(rel_path) or alternates.get(rel_path.replace("\\", "/")) or ()
+
+
+def _rel_path_installed(download_def, rel_path):
+    from shared.utils import files_locator as fl
+    return fl.locate_file(rel_path, error_if_none=False) is not None or any(
+        fl.locate_file(alternate, error_if_none=False) is not None
+        for alternate in _rel_path_alternates(download_def, rel_path)
+    )
+
+
+def process_files_def(repoId=None, sourceFolderList=None, fileList=None, targetFolderList=None, gen=None, show_filename=True, extraRelPaths=None):
     from huggingface_hub import HfApi, constants, snapshot_download
     from shared.utils import files_locator as fl
 
@@ -190,6 +205,7 @@ def process_files_def(repoId=None, sourceFolderList=None, fileList=None, targetF
     install_hf_download_patch()
     if targetFolderList is None:
         targetFolderList = [None] * len(sourceFolderList)
+    download_def = {"extraRelPaths": extraRelPaths}
     downloads = []
     for targetFolder, sourceFolder, files in zip(targetFolderList, sourceFolderList, fileList):
         if targetFolder is not None and len(targetFolder) == 0:
@@ -208,7 +224,7 @@ def process_files_def(repoId=None, sourceFolderList=None, fileList=None, targetF
             files = [name[len(prefix):] for name in HfApi().list_repo_files(repoId) if name.startswith(prefix)]
         for onefile in files:
             check_download_cancelled(gen)
-            if fl.locate_file(_download_relpath(sourceFolder, onefile, targetFolder), error_if_none=False) is None:
+            if not _rel_path_installed(download_def, _download_relpath(sourceFolder, onefile, targetFolder)):
                 downloads.append(dict(repo_id=repoId, filename=onefile, local_dir=local_dir, subfolder=sourceFolder or None))
     for index, download in enumerate(downloads, 1):
         _hf_download(**download, gen=gen, show_filename=show_filename, file_index=index, file_count=len(downloads))
@@ -247,7 +263,7 @@ def download_def_missing_files(download_def):
             continue
         for filename in files:
             rel_path = _download_relpath(source_folder, filename, target_folder)
-            if fl.locate_file(rel_path, error_if_none=False) is None:
+            if not _rel_path_installed(download_def, rel_path):
                 missing.append(rel_path)
     return missing
 
