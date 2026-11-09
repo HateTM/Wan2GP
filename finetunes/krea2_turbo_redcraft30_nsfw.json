@@ -1,0 +1,15 @@
+{
+    "model": {
+        "name": "Krea2 RedCraft 3.0 NSFW (H3-Krea2 Dual)",
+        "architecture": "krea2_turbo",
+        "description": "RedCraft 3.0 (赤佬 3.0) — NSFW Krea 2 finetune, anti-mosaic, dual H3/Krea2 training. NVFP4 checkpoint. Recommended: ER_SDE/Euler, CFG 1, 8-12 steps.",
+        "URLs": [
+            "Krea2RedMix3.0-ComfyUI-nvfp4.safetensors"
+        ],
+        "author": "civitai RedCraft",
+        "compile": false
+    },
+    "num_inference_steps": 10,
+    "guidance_scale": 1.0,
+    "prompt": "a young woman, cinematic portrait, golden hour"
+}

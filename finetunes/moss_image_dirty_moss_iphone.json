@@ -1,0 +1,30 @@
+{
+    "model": {
+        "name": "MOSS Dirty-Moss Candid iPhone (8 steps)",
+        "architecture": "moss_image",
+        "description": "Dirty-Moss + cndamiph (Candid Amateur iPhone, CivitAI 3012015) + DMD 8-step LoRA: casual phone-snapshot look, 8 steps at CFG 1, about 12 s for 896x1152. cndamiph at 1.0 shifts framing, wardrobe and expression, not just grain: lower the multiplier to about 0.6-0.7 for a subtler effect. Text on signs holds up better here than at 4 steps.",
+        "URLs": [
+            "moss_image/dirtyMoss_int8_wgp.safetensors"
+        ],
+        "author": "Sateluco + cndamiph + lodestones DMD",
+        "compile": false
+    },
+    "prompt": "cndamiph, a woman in her thirties sitting on a worn wooden bench outside a small cafe, late afternoon sunlight, casual snapshot, natural skin texture, imperfect framing",
+    "negative_prompt": "",
+    "resolution": "896x1152",
+    "image_mode": 1,
+    "batch_size": 1,
+    "num_inference_steps": 8,
+    "guidance_scale": 1,
+    "flow_shift": 5,
+    "prompt_enhancer": "",
+    "multi_prompts_gen_type": "FG",
+    "activated_loras": [
+        "cndamiph_Candid_Amateur_iPhone_MOSS_v1.safetensors",
+        "MOSS_DMD_8STEP_QKV_FORGE_FIX.safetensors"
+    ],
+    "loras_multipliers": "1 1",
+    "custom_settings": {
+        "moss_image_kv_cache": "Disabled"
+    }
+}

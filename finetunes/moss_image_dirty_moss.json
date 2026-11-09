@@ -1,0 +1,26 @@
+{
+    "model": {
+        "name": "MOSS Dirty-Moss v1.0 (photographic realism)",
+        "architecture": "moss_image",
+        "description": "Dirty-Moss by Sateluco (CivitAI 3015644, v1.0 22.10.2026): MOSS Image merge for unstaged photographic realism. INT8 ConvRot. Author's settings: 25 steps, CFG 2, ER SDE Simple, 896x1152 test / 1152x1440 final.",
+        "URLs": [
+            "moss_image/dirtyMoss_int8_wgp.safetensors"
+        ],
+        "author": "Sateluco",
+        "compile": false
+    },
+    "prompt": "a woman in her thirties sitting on a worn wooden bench outside a small cafe, late afternoon sunlight, casual snapshot, natural skin texture, imperfect framing, 35mm photo",
+    "negative_prompt": "",
+    "resolution": "896x1152",
+    "image_mode": 1,
+    "batch_size": 1,
+    "num_inference_steps": 25,
+    "guidance_scale": 2,
+    "flow_shift": 5,
+    "prompt_enhancer": "",
+    "multi_prompts_gen_type": "FG",
+    "custom_settings": {
+        "moss_image_kv_cache": "Disabled"
+    }
+}
+

@@ -1,0 +1,29 @@
+{
+    "model": {
+        "name": "MOSS Dirty-Moss v1.0 FAST (8 steps, DMD)",
+        "architecture": "moss_image",
+        "description": "Dirty-Moss with the QKV-fused DMD 8-step LoRA baked into the defaults: 8 steps, CFG 1. About 10 s for 896x1152 against about 34 s at 25 steps; slightly smoother skin and less grain than the 25-step reference. Use the plain 'MOSS Dirty-Moss v1.0' model when photographic texture matters most.",
+        "URLs": [
+            "moss_image/dirtyMoss_int8_wgp.safetensors"
+        ],
+        "author": "Sateluco + lodestones DMD (QKV Forge fix)",
+        "compile": false
+    },
+    "prompt": "a woman in her thirties sitting on a worn wooden bench outside a small cafe, late afternoon sunlight, casual snapshot, natural skin texture, imperfect framing, 35mm photo",
+    "negative_prompt": "",
+    "resolution": "896x1152",
+    "image_mode": 1,
+    "batch_size": 1,
+    "num_inference_steps": 8,
+    "guidance_scale": 1,
+    "flow_shift": 5,
+    "prompt_enhancer": "",
+    "multi_prompts_gen_type": "FG",
+    "activated_loras": [
+        "MOSS_DMD_8STEP_QKV_FORGE_FIX.safetensors"
+    ],
+    "loras_multipliers": "1",
+    "custom_settings": {
+        "moss_image_kv_cache": "Disabled"
+    }
+}

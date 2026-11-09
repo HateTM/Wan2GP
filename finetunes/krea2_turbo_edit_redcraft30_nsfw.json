@@ -1,0 +1,34 @@
+{
+    "model": {
+        "name": "Krea2 RedCraft 3.0 NSFW Identity Edit (H3-Krea2 Dual)",
+        "architecture": "krea2_turbo_edit",
+        "description": "RedCraft 3.0 (\u8d64\u4f6c 3.0) NSFW checkpoint (local NVFP4) combined with the official Krea 2 Identity Edit v1.2 LoRA. Reference-image editing with identity preservation, up to two image refs. Unofficial combo: the identity LoRA was trained on the base Krea 2, so raise its multiplier if identity drifts.",
+        "URLs": [
+            "Krea2RedMix3.0-ComfyUI-nvfp4.safetensors"
+        ],
+        "loras": [
+            "https://huggingface.co/DeepBeepMeep/krea-2/resolve/main/krea2_identity_edit_v2.safetensors"
+        ],
+        "loras_multipliers": [
+            1.0
+        ],
+        "author": "civitai AiMetatron + conrad_locke (Identity Edit LoRA)",
+        "compile": false,
+        "preset_profiles_dir": [
+            "krea2_redcraft_edit_presets",
+            "krea2_presets"
+        ],
+        "lock_resolutions": false,
+        "resolutions": [],
+        "resolution_budget": "2048x2048"
+    },
+    "prompt": "Change the outfit to casual summer clothes; keep the person's face, pose and the background unchanged.",
+    "negative_prompt": "",
+    "video_prompt_type": "KI",
+    "model_mode": 0,
+    "batch_size": 1,
+    "num_inference_steps": 10,
+    "guidance_scale": 0,
+    "resolution": "1024x1024",
+    "settings_version": 2.82
+}
