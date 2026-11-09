@@ -7,17 +7,17 @@ from typing import Any
 PROMPT_ENHANCER_SPECULATIVE_DECODING_KEY = "prompt_enhancer_speculative_decoding"
 PROMPT_ENHANCER_SPECULATIVE_DECODING_AUTO = 2
 PROMPT_ENHANCER_SPECULATIVE_DECODING_DEFAULT = PROMPT_ENHANCER_SPECULATIVE_DECODING_AUTO
-PROMPT_ENHANCER_SPECULATIVE_DECODING_IDS = frozenset((4, 5, 6))
-PROMPT_ENHANCER_SPECULATIVE_DECODING_VRAM_GB = {4: 12, 5: 24, 6: 8}  # Auto when the model's fit in VRAM is unknown (resolve_..., fit)
+PROMPT_ENHANCER_SPECULATIVE_DECODING_IDS = frozenset((4, 5, 6, 7))
+PROMPT_ENHANCER_SPECULATIVE_DECODING_VRAM_GB = {4: 12, 5: 24, 6: 8, 7: 12}  # Auto when the model's fit in VRAM is unknown (resolve_..., fit)
 MTP_AUTO_SLACK = 512 << 20  # Auto: MTP still pays when it leaves this much of the model out of VRAM (with the model in VRAM it decodes about twice as fast)
 MTP_AUTO_FOUR_DRAFTS_VRAM_GB = 24  # Auto on Qwen3.8 27B: 4 draft tokens from this size, from MTP_AUTO_FOUR_DRAFTS_BONSAI_VRAM_GB with Bonsai, 2 otherwise
 MTP_AUTO_FOUR_DRAFTS_BONSAI_VRAM_GB = 12
 MTP_AUTO_NO_OFFLOAD_VRAM_GB = range(13, 17)  # Auto on GPUs of these sizes: MTP only when the whole model stays in VRAM with it. Below, the fit rule: part of the model often streams there anyway
 PROMPT_ENHANCER_SPECULATIVE_DRAFT_COUNTS = (2, 3, 4)
-BLOCK_DRAFT_METHODS = ("dspark", "dflash2")
-SPECULATIVE_METHOD_LABELS = {"auto": "Auto", "disabled": "Disabled", "mtp": "MTP", "dspark": "DSpark", "dflash2": "DFlash2"}
-SPECULATIVE_MAX_TOKENS = {"mtp": 8, "dspark": 7, "dflash2": 7}
-SPECULATIVE_DEFAULT_TOKENS = {"mtp": 2, "dspark": 7, "dflash2": 5}
+BLOCK_DRAFT_METHODS = ("dspark", "dflash2", "dspine")
+SPECULATIVE_METHOD_LABELS = {"auto": "Auto", "disabled": "Disabled", "mtp": "MTP", "dspark": "DSpark", "dflash2": "DFlash2", "dspine": "DSpine"}
+SPECULATIVE_MAX_TOKENS = {"mtp": 8, "dspark": 7, "dflash2": 7, "dspine": 7}
+SPECULATIVE_DEFAULT_TOKENS = {"mtp": 2, "dspark": 7, "dflash2": 5, "dspine": 7}
 PROMPT_ENHANCER_SPECULATIVE_DECODING_CHOICES = [
     ("Auto (MTP)", PROMPT_ENHANCER_SPECULATIVE_DECODING_AUTO),
     ("Disabled", 0),
@@ -76,7 +76,7 @@ def speculative_decoding_runtime(value):
 
 
 def block_drafters_supported() -> bool:
-    """DSpark and DFlash2 run on Triton and FlashAttention 2 (the LLM engine uses each one wherever it is supported)."""
+    """DSpark, DFlash2 and DSpine run on Triton and FlashAttention 2 (the LLM engine uses each one wherever it is supported)."""
     from shared.llm_engines.lmgp.vllm_support import resolve_prompt_enhancer_lm_features
     features = resolve_prompt_enhancer_lm_features()
     return features.triton and features.flash
@@ -87,7 +87,7 @@ def speculative_decoding_ui_state(enhancer_enabled, quantization, value, tokens=
     if prompt_enhancer_supports_speculative_decoding(enhancer_enabled):
         methods.append("mtp")
     if int(enhancer_enabled or 0) == 5 and quantization in ("gguf", "gguf_q3", "gguf_q2", "gguf_ptq1") and block_drafters_supported():
-        methods.extend(BLOCK_DRAFT_METHODS)
+        methods.extend(method for method in BLOCK_DRAFT_METHODS if method != "dspine" or quantization != "gguf_ptq1")
     if isinstance(value, str) and value in SPECULATIVE_METHOD_LABELS:
         method, count = value, tokens
     else:
@@ -105,8 +105,9 @@ def speculative_decoding_ui_state(enhancer_enabled, quantization, value, tokens=
         "auto": "0 to ~1 GiB" if "mtp" in methods else "0 GiB",
         "disabled": "0 GiB",
         "mtp": "~0.5–1 GiB",
-        "dspark": "~4–5 GiB",
-        "dflash2": "~4–5 GiB",
+        "dspark": "~3–4 GiB",
+        "dflash2": "~2.5 GiB",
+        "dspine": "~3 GiB",
     }
     return [(f"{SPECULATIVE_METHOD_LABELS[item]} [+{costs[item]} VRAM]", item) for item in methods], method, list(range(1, maximum + 1)), count
 
@@ -122,11 +123,11 @@ def validate_prompt_enhancer_speculative_decoding(enhancer_enabled: Any, value: 
     enabled = normalize_prompt_enhancer_speculative_decoding(value)
     runtime_mode, _ = speculative_decoding_runtime(enabled)
     if runtime_mode in BLOCK_DRAFT_METHODS and int(enhancer_enabled or 0) != 5:
-        raise ValueError("DSpark and DFlash2 require Qwen3.8-27B or Bonsai 2 27B.")
+        raise ValueError("DSpark, DFlash2 and DSpine require Qwen3.8-27B (DSpark and DFlash2 also Bonsai 2 27B).")
     if runtime_mode not in (0, PROMPT_ENHANCER_SPECULATIVE_DECODING_AUTO) and not prompt_enhancer_supports_speculative_decoding(enhancer_enabled):
         if int(enhancer_enabled or 0) == 3:
             raise ValueError("Speculative decoding is not available with Qwen3.5-4B.")
-        raise ValueError("Speculative decoding requires the Qwen3.5-9B, Qwen3.8-9B or Qwen3.8-27B prompt enhancer.")
+        raise ValueError("Speculative decoding requires the Qwen3.5-9B, Qwen3.8-9B, Qwen3.8-27B or Qwen3.8 Flash-Next prompt enhancer.")
     return enabled
 
 
@@ -155,10 +156,10 @@ def resolve_prompt_enhancer_speculative_decoding(enhancer_enabled: Any, value: A
             total_vram_gb = 0
     bonsai = enhancer_no == 5 and qwen_backend == "gguf_ptq1"
     detected_vram_gb = max(0, int(float(total_vram_gb) + 0.5))
-    model_label = "Bonsai PTQ1" if bonsai else {4: "Qwen3.5-9B", 6: "Qwen3.8-9B"}.get(enhancer_no, "Qwen3.8-27B")
+    model_label = "Bonsai PTQ1" if bonsai else {4: "Qwen3.5-9B", 6: "Qwen3.8-9B", 7: "Qwen3.8 Flash-Next"}.get(enhancer_no, "Qwen3.8-27B")
     if float(total_vram_gb) <= 8:  # small GPUs: the drafter, its caches and graphs would take room from the model's blocks
         return 0, f"Speculative Decoding disabled automatically for {model_label}: {max(0.0, float(total_vram_gb)):.2f} GiB VRAM detected (8 GiB or less)."
-    drafts = 4 if enhancer_no == 5 and detected_vram_gb >= (MTP_AUTO_FOUR_DRAFTS_BONSAI_VRAM_GB if bonsai else MTP_AUTO_FOUR_DRAFTS_VRAM_GB) else 2
+    drafts = 4 if enhancer_no == 7 or enhancer_no == 5 and detected_vram_gb >= (MTP_AUTO_FOUR_DRAFTS_BONSAI_VRAM_GB if bonsai else MTP_AUTO_FOUR_DRAFTS_VRAM_GB) else 2
     enabled, enabled_for = speculative_decoding_config("mtp", drafts), f"Speculative Decoding enabled automatically for {model_label} ({drafts} draft tokens)"
     sizes = None if fit is None else fit()
     if sizes is None and bonsai:

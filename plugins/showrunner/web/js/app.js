@@ -1,12 +1,12 @@
 // Copyright (c) 2026 DeepBeepMeep - part of WanGP, WanGP Community License 2.0 (see LICENSE.txt)
 // Showrunner page: state, routing, the shell (top bar, view rail, side panel), live events and global shortcuts.
 import { api, listen } from './api.js';
-import { icon, esc, h, toast, debounce, aspectValue, kindOfFile, closeMenu, confirmDialog, formatDuration, count, $, adviceBar, bindAdvice } from './ui.js';
+import { icon, esc, h, toast, debounce, throttle, aspectValue, kindOfFile, closeMenu, confirmDialog, formatDuration, count, $, adviceBar, bindAdvice } from './ui.js';
 import { renderHome } from './home.js';
 import { openDefaultModels } from './models.js';
 import { openSettings } from './settings.js';
 import { mountBrief } from './brief.js';
-import { mountStoryboard, toShoot } from './storyboard.js';
+import { mountStoryboard, toShoot, visible as onBoard } from './storyboard.js';
 import { mountTimeline } from './timeline.js';
 import { mountCast } from './cast.js';
 import { mountDeliver } from './deliver.js';
@@ -20,15 +20,19 @@ export const state = {
   embedded: params.has('embedded'), catalog: [], directorInfo: { available: false }, kinds: [], aspects: [],
   pid: null, doc: null, view: 'storyboard', side: 'inspector', sideOpen: dockOpen(), deepyTab: false,
   selection: new Set(), focus: null, live: { text: '', tools: [], status: null, progress: null, running: false, task: null },
-  renders: {}, filter: 'all', cardWidth: +(localStorage.getItem('sr.card') || 250), binOpen: localStorage.getItem('sr.bin') !== '0',
+  renders: {}, filter: 'all', shootTier: localStorage.getItem('sr.tier') === 'final' ? 'final' : 'draft', cardWidth: +(localStorage.getItem('sr.card') || 250), binOpen: localStorage.getItem('sr.bin') !== '0',
 };
 const VIEWS = { brief: ['Brief', 'brief', mountBrief], storyboard: ['Board', 'grid', mountStoryboard], timeline: ['Timeline', 'timeline', mountTimeline], cast: ['Cast', 'users', mountCast], deliver: ['Deliver', 'download', mountDeliver] };
 const UNDONE = { add_take: 'a new take', update_shot: 'a shot edit', verdict: 'a verdict', add_shots: 'new shots', replace_plan: 'the plan', remove_shot: 'a deletion',
   move_shots: 'a move', reorder: 'a move', remove_take: 'a removed take', brief: 'a brief edit', add_cast: 'a new cast member', update_cast: 'a cast edit',
   remove_cast: 'a cast removal', edit: 'a sound edit', add_overlay: 'a text', update_overlay: 'a text edit', remove_overlay: 'a text deletion', style: 'a style edit',
-  outline: 'the outline', deliverable: 'an export', bin_add: 'a bin import', bin_remove: 'a bin removal', bin_to_take: 'a take from the bin', stage: 'a stage change' };
+  outline: 'the outline', deliverable: 'an export', bin_add: 'a bin import', bin_remove: 'a bin removal', bin_to_take: 'a take from the bin', bin_to_track: 'a sound from the bin',stage: 'a stage change' };
 const GUIDE_PAGES = { home: 'Quick Start', brief: 'Starting a Production', storyboard: 'Reviewing and Changing the Plan', timeline: 'The Timeline', cast: 'The Cast', deliver: 'Delivering' };
 const STAGES = [['brief', 'Brief'], ['planning', 'Plan'], ['review', 'Review'], ['shooting', 'Shoot'], ['editing', 'Edit'], ['delivered', 'Deliver']];
+// What each stage's button opens: its view, on the Board the shots of that step, and its tooltip
+const STAGE_VIEWS = { brief: ['brief', null, 'opens the Brief'], planning: ['storyboard', 'all', 'shows all the shots on the Board'], review: ['storyboard', 'review', 'shows the takes to review on the Board'],
+  shooting: ['storyboard', 'todo', 'shows the shots still to shoot on the Board'], editing: ['timeline', null, 'opens the Timeline'], delivered: ['deliver', null, 'opens Deliver'] };
+const openStage = () => STAGES.find(([key]) => STAGE_VIEWS[key][0] === state.view && (!STAGE_VIEWS[key][1] || STAGE_VIEWS[key][1] === state.filter))?.[0];
 const app = document.getElementById('app');
 let stopEvents = null, mounted = null, inspector = null, director = null, conversation = null, bin = null, catalogStop = null;
 
@@ -63,6 +67,7 @@ export const actions = {
     await actions.ops([{ op: 'brief', fields: { aspect } }]);
     actions.direct('message', `Make a ${aspect} version of the current cut: the same shots, words, cast, narrator and music, every shot made again in ${aspect}, and the cards in the same colours, typefaces and layout at the new format. The current version stays as it is.`);
   },
+  refreshTopbar() { renderTopbar(); },
   refreshDirector() { director?.update(state.doc); renderTopbar(); },  // what it says about the user's turn changed without a new document
   select(shotId, { additive = false, range = false, open = true, keep = false } = {}) {
     const ids = mounted?.visibleIds?.() || state.doc?.shots.map(shot => shot.id) || [];  // a range covers the shots on screen only
@@ -112,9 +117,10 @@ export const actions = {
   busy: doc => !['idle', 'paused'].includes(doc.director.state),  // a paused director waits for the user: nothing runs
   // Why the buttons that give the showrunner a task are greyed out now ('': they are not).
   directorBlocked() {
-    if (state.live.running || actions.busy(state.doc)) return 'The showrunner is working: this comes back when it finishes, or after Pause or Stop.';
-    return state.directorInfo.available === false && state.directorInfo.reason || '';
+    return actions.renderBlocked() || state.directorInfo.available === false && state.directorInfo.reason || '';
   },
+  // Why Render now cannot run now ('': it can): it needs no showrunner, but does not run beside one.
+  renderBlocked: () => state.live.running || actions.busy(state.doc) ? 'The showrunner is working: this comes back when it finishes, or after Pause or Stop.' : '',
   // Why the edit cannot be assembled now ('': it can).
   assembleBlocked: doc => doc.shots.some(shot => shot.included && shot.takes.length) ? '' : 'Nothing to assemble yet: shoot at least one shot, the edit is made of their takes.',
   planBlocked: doc => ['text', 'script', 'song'].some(key => String(doc.brief[key] || '').trim()) ? '' : 'Write your idea in the brief first, or drop a song or a script: the showrunner plans from it.',
@@ -144,6 +150,9 @@ export const actions = {
     document.querySelectorAll('video, audio').forEach(media => media.pause());
   },
   file: (path, download = false) => api.file(state.pid, path, download),
+  sourcePart: shot => api.sourcePart(state.pid, shot.id),  // what a remake's shot delivers, as a video of its own
+  takePart: (shot, take) => api.takePart(state.pid, shot.id, take.id),
+  sourceFrame: (shot, frame) => api.sourceFrame(state.pid, shot.id, frame),  // one frame of a remake's source, to paint elsewhere
   templateRoles(refresh = false) {  // the template picker's roles, once per production unless a pick changed them
     if (refresh || !state.templateRoles || state.templateRoles.pid !== state.pid) {
       state.templateRoles = { pid: state.pid, promise: api.templates(state.pid).then(result => result.roles) };
@@ -164,6 +173,7 @@ export const actions = {
   },
   async redo() { if (!state.pid) return; const result = await api.redo(state.pid); if (result.revision == null) toast('Nothing to redo.'); else setDoc(result.doc); },
   rerender: () => route(),
+  tierChanged() { mounted?.update?.(state.doc); inspector?.update?.(state.doc); },
   // Assemble the edit from the page: warns about shots left out, reports once, and says when the video is ready.
   async assemble() {
     const doc = state.doc;
@@ -218,6 +228,10 @@ const refreshDoc = debounce(async () => {
   try { setDoc(await api.get(state.pid)); } catch (error) { if (error.status === 404) location.hash = '#/'; }
 }, 120);
 
+// The showrunner streams its words and steps many times a second, and a render its progress: the page shows them at most ten times a second.
+const drawLive = throttle(() => { director?.live?.(); renderTopbar(); });
+const drawProgress = throttle(() => { mounted?.progress?.(); renderTopbar(); });  // the pill says how far the user's renders are
+
 function eventsFor(pid) {
   stopEvents?.();
   stopEvents = listen(pid, {
@@ -247,13 +261,12 @@ function eventsFor(pid) {
         reportChanges(event.event);
         conversation?.finished();
       }
-      director?.live?.();
-      renderTopbar();
+      drawLive();
     },
     render: event => {
       if (event.done) delete state.renders[event.shot];
       else state.renders[event.shot] = event.progress ?? 0;
-      mounted?.progress?.();
+      drawProgress();
     },
     assemble: event => {
       if (!state.userAssembling) {  // an assembly the user started reports on its own button
@@ -348,6 +361,8 @@ function draw(element, html) {
   return true;
 }
 
+// The pill's dot calls for a new turn for a few seconds: a later redraw of the bar (another page, a saved edit) must not play it again.
+let calledTurn = '', callingUntil = 0;
 function renderTopbar() {
   const bar = document.getElementById('topbar');
   if (!bar) return;
@@ -357,20 +372,26 @@ function renderTopbar() {
   }
   const doc = state.doc;
   const stageIndex = STAGES.findIndex(([key]) => key === doc.stage);
-  const working = actions.busy(doc) || state.live.running, next = nextStep(doc);
+  const working = actions.busy(doc) || state.live.running, next = nextStep(doc), turn = next ? `${doc.id}|${next.label}|${next.text}` : '', renders = userRenders(doc);
+  if (turn !== calledTurn) { calledTurn = turn; callingUntil = turn ? performance.now() + 4800 : 0; }
   const html = `${brand()}
     <span class="sep"></span>
     <input class="input bare crumb-title" id="title" value="${esc(doc.title)}" aria-label="Production title" spellcheck="false">
-    <div class="stages">${STAGES.map(([key, label], index) => `${index ? icon('chevron', 'stage-arrow') : ''}<button class="stage ${index < stageIndex ? 'done' : index === stageIndex ? 'current' : ''}" data-stage="${key}" title="${label}: the production's stage · click to open its view"><span class="dot">${index < stageIndex ? icon('check') : index + 1}</span><span>${label}</span></button>`).join('')}</div>
+    <div class="stages">${STAGES.map(([key, label], index) => `${index ? icon('chevron', 'stage-arrow') : ''}<button class="stage ${index < stageIndex ? 'done' : index === stageIndex ? 'current' : ''} ${key === openStage() ? 'open' : ''}" data-stage="${key}" title="${label}: ${STAGE_VIEWS[key][2]}"><span class="dot">${index < stageIndex ? icon('check') : index + 1}</span><span>${label}</span></button>`).join('')}</div>
     <button class="btn ghost icon" id="undo" title="Undo (Ctrl+Z)">${icon('undo')}</button>
     <button class="btn ghost icon" id="redo" title="Redo (Ctrl+Shift+Z)">${icon('redo')}</button>
-    <button class="director-pill ${working ? 'working' : ''} ${next ? 'turn' : ''}" id="pill" title="${esc(next ? `Your turn: ${next.text}` : 'Showrunner')}"><span class="avatar">${icon('director')}</span>${next ? `<span class="state">Your turn: ${esc(next.label)}</span>` : `<span>Showrunner</span><span class="state">${esc(directorLabel(doc))}</span>`}</button>
+    <button class="director-pill" id="pill"></button>
     ${guideButton()}${themeButton()}`;
   const tab = document.querySelector('#side [data-panel="director"]');
   tab?.classList.toggle('working', !!working);
   tab?.classList.toggle('turn', !!next);
   renderNextStep();
-  if (!draw(bar, html)) return;
+  // the pill changes in place: a render's progress redraws it every few seconds, where the title being typed and the buttons being pressed would be lost
+  const pill = { className: `director-pill ${working || renders ? 'working' : ''} ${next ? 'turn' : ''} ${performance.now() < callingUntil ? 'call' : ''}`, title: next ? `Your turn: ${next.text}` : renders?.title || 'Showrunner',
+                 innerHTML: `<span class="avatar">${icon('director')}</span>${next ? `<span class="state">Your turn: ${esc(next.label)}</span>` : `<span>Showrunner</span><span class="state">${esc(directorLabel(doc))}</span>`}` };
+  const drawn = draw(bar, html), shown = bar.querySelector('#pill'), key = Object.values(pill).join('|');
+  if (shown.dataset.shown !== key) Object.assign(shown, pill).dataset.shown = key;
+  if (!drawn) return;
   wangpButton(bar);
   const title = document.getElementById('title');
   title.addEventListener('change', () => title.value.trim() && actions.ops([{ op: 'brief', fields: { title: title.value.trim() } }]));
@@ -378,7 +399,15 @@ function renderTopbar() {
   bar.querySelector('#undo').onclick = () => actions.undo();
   bar.querySelector('#redo').onclick = () => actions.redo();
   bar.querySelector('#pill').onclick = () => actions.toggleSide('director');
-  bar.querySelectorAll('[data-stage]').forEach(button => button.onclick = () => actions.go({ brief: 'brief', planning: 'storyboard', review: 'storyboard', shooting: 'storyboard', editing: 'timeline', delivered: 'deliver' }[button.dataset.stage]));
+  bar.querySelectorAll('[data-stage]').forEach(button => button.onclick = () => {
+    const [view, filter] = STAGE_VIEWS[button.dataset.stage];
+    if (filter && state.view === view) return mounted.showFilter(filter);
+    if (filter) {
+      state.filter = filter;
+      state.selection = new Set([...state.selection].filter(id => onBoard(actions.shot(id))));  // a selection never hides behind the filter
+    }
+    actions.go(view);
+  });
 }
 
 // The next step in full, above the media bin: its button does it and closes it; when there is nothing to press, an x closes it.
@@ -422,7 +451,7 @@ function renderNextStep() {
 // the media bin until the user closes it, on every page (the toast at the end of a task passes unseen, and not at all while the page is out of sight).
 // look: a page to see first; action: what its button does on that page, or at once without one.
 export function nextStep(doc) {
-  if (!doc || actions.busy(doc) || state.live.running) return null;
+  if (!doc || actions.busy(doc) || state.live.running || userRenders(doc)) return null;
   const last = doc.director.last?.status, latest = doc.deliverables.at(-1);
   const takes = doc.shots.filter(shot => shot.included && shot.takes.length).length, todo = toShoot(doc).length;
   const toReview = doc.shots.filter(shot => shot.included && shot.status === 'rendered').length;
@@ -463,9 +492,23 @@ export function activity(live) {
   return shot ? `Shooting ${shot[1]} · ${shot[2]} of ${shot[3]}` : phase;
 }
 
+// Renders the user started without the showrunner (Render now, Reshoot): their shots show rendering from the click, the one WanGP works on
+// reports its progress, with the neighbours a remake renders together with it.
+function userRenders(doc) {
+  const shots = doc.shots.filter(shot => shot.status === 'rendering');
+  if (!shots.length || actions.busy(doc) || state.live.running) return null;
+  const current = shots.find(shot => state.renders[shot.id] != null), now = current ? [current, ...shots.filter(shot => shot.rendering_with === current.id)] : [];
+  const later = shots.filter(shot => !now.includes(shot)), progress = current ? Math.round(state.renders[current.id]) : 0, ids = list => list.map(shot => shot.id).join(' + ');
+  return now.length ? { label: `Rendering ${ids(now)}${progress ? ` · ${progress}%` : ''}${later.length ? ` · ${later.length} more` : ''}`,
+                        title: `Rendering what you asked for, without the showrunner: ${ids(now)} now${progress ? ` (${progress}%)` : ''}${later.length ? `, then ${later.map(shot => shot.id).join(', ')}` : ''}. Each card shows its progress.` }
+    : { label: `Rendering ${count(shots.length, 'shot')}…`, title: `${count(shots.length, 'shot')} to render, without the showrunner: ${shots.map(shot => shot.id).join(', ')}. Its progress shows once WanGP works on it.` };
+}
+
 function directorLabel(doc) {
   const next = nextStep(doc);
   if (next) return next.label;
+  const renders = userRenders(doc);
+  if (renders) return renders.label;
   if (state.live.running && state.live.queued) return 'Waiting its turn';
   if (state.live.running || doc.director.state === 'running') return activity(state.live).replace(/ s\d+ ·/, '') || { plan: 'Planning…', shoot: 'Shooting…', reshoot: 'Fixing…', assemble: 'Assembling…' }[doc.director.task] || 'Working…';
   if (doc.director.state === 'queued') return 'Queued';

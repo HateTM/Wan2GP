@@ -33,6 +33,7 @@ export const api = {
   trash: id => call('DELETE', `productions/${id}`),
   archive: (id, archived = true) => call('POST', `productions/${id}/archive`, { archived }),
   analysis: (id, refresh = false) => call('GET', `productions/${id}/analysis${refresh ? '?refresh=true' : ''}`),
+  renderGroups: (id, shots) => call('GET', `productions/${id}/render-groups?shots=${encodeURIComponent(shots.join(','))}`),
   waveform: (id, path) => call('GET', `productions/${id}/waveform?path=${encodeURIComponent(path)}`),
   subtitles: (id, path) => call('GET', `productions/${id}/subtitles?path=${encodeURIComponent(path)}`),
   rates: id => call('GET', `productions/${id}/rates`),
@@ -44,6 +45,7 @@ export const api = {
   pause: (id, now = false) => call('POST', `productions/${id}/director/pause${now ? '?now=true' : ''}`),
   resume: (id, message = '') => call('POST', `productions/${id}/director/resume`, { message }),
   rerun: (id, shot) => call('POST', `productions/${id}/shots/${shot}/rerun`),
+  renderNow: (id, shots, final = false, newSeed = null) => call('POST', `productions/${id}/render`, { shots, final, new_seed: newSeed }),
   detachSound: (id, shot) => call('POST', `productions/${id}/shots/${shot}/detach-sound`),
   cancelRender: (id, shot) => call('POST', `productions/${id}/shots/${shot}/cancel`),
   assemble: id => call('POST', `productions/${id}/assemble`),
@@ -51,6 +53,7 @@ export const api = {
   chooseTemplate: (id, role, template) => call('POST', `productions/${id}/templates`, { role, template }),
   defaultTemplates: () => call('GET', 'templates'),
   chooseDefaultTemplate: (role, template) => call('POST', 'templates', { role, template }),
+  setPromptRules: (template, text) => call('POST', 'prompt-rules', { template, text }),
   guide: () => call('GET', 'guide'),
   settings: () => call('GET', 'settings'),
   conversation: (id, after) => call('GET', `productions/${id}/conversation?after=${after}`),
@@ -63,9 +66,18 @@ export const api = {
     const form = new FormData();
     form.append('file', file, file.name);
     form.append('role', role);
-    if (target) form.append('target', target);
+    if (target != null && target !== '') form.append('target', target);  // a position can be 0
     return call('POST', `productions/${id}/upload`, form);
   },
+  exportUrl: id => `api/productions/${id}/export`,
+  importZip(file) {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    return call('POST', 'productions/import', form);
+  },
+  sourcePart: (id, shot) => `api/productions/${id}/source_part?shot=${encodeURIComponent(shot)}`,
+  sourceFrame: (id, shot, frame) => `api/productions/${id}/source_frame?shot=${encodeURIComponent(shot)}&frame=${encodeURIComponent(frame)}`,
+  takePart: (id, shot, take) => `api/productions/${id}/take_part?shot=${encodeURIComponent(shot)}&take=${encodeURIComponent(take)}`,
   file: (id, path, download = false) => path ? `api/productions/${id}/file?path=${encodeURIComponent(path)}${download ? '&download=true' : ''}` : '',
 };
 

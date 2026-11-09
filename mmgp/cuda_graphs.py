@@ -32,6 +32,7 @@ in between go through the hooks that transfer them.
 import contextlib
 import dataclasses
 import enum
+import math
 import sys
 import traceback
 import weakref
@@ -62,6 +63,19 @@ _managers = []
 _capturing = False  # a block's capture is running (its forward is recorded, nothing runs on the GPU)
 _autotune_guarded = False
 _static_storages = weakref.WeakValueDictionary()  # storage address -> a static buffer of some graph manager (`_mm_graphs`)
+
+
+_cpu_jobs_supported = None  # device -> whether blocks computing on the CPU may be captured (their linears are host jobs that kernels ask for)
+
+
+def register_cpu_jobs(supported):
+    """A compute backend's check: blocks computing on the CPU (cpuCompute) are graphed where it answers True, otherwise they run eagerly."""
+    global _cpu_jobs_supported
+    _cpu_jobs_supported = supported
+
+
+def cpu_jobs_supported():
+    return _cpu_jobs_supported is not None and _cpu_jobs_supported(torch.cuda.current_device())
 
 
 def _guard_triton_autotune():
@@ -388,6 +402,16 @@ def _flatten(tree):
             _register_dataclass(cls)
 
 
+def _spec_hashable():
+    try:
+        return hash(pytree.tree_flatten(((), {}))[1]) is not None
+    except TypeError:  # PyTorch 2.7: the hash generated for TreeSpec fails on its lists; a graph's key then holds its repr, the same structure
+        return False
+
+
+_SPEC_HASHABLE = _spec_hashable()
+
+
 def _signature(leaves, holders=frozenset()):
     signature = []
     for leaf in leaves:
@@ -406,6 +430,21 @@ def _signature(leaves, holders=frozenset()):
 
 def _storage(t):
     return t.untyped_storage().data_ptr()
+
+
+def _extra_slot(signature):
+    # (size class in bytes, device) of a contiguous tensor: four sizes per power of two, at least 256 KiB apart
+    shape, stride, dtype, device = signature
+    count = 1
+    for size, step in zip(reversed(shape), reversed(stride)):
+        if step != count:
+            return None
+        count *= size
+    nbytes = count * dtype.itemsize
+    if not nbytes:
+        return None
+    step = max(1 << max(nbytes.bit_length() - 3, 0), 1 << 18)
+    return -(-nbytes // step) * step, device
 
 
 def _same_buffer(a, b):
@@ -540,7 +579,7 @@ class BlockGraphs:
         self.name, self.weights_key, self.weight_tensors, self.extra_inputs, self.ready = name, weights_key, weight_tensors, extra_inputs, ready
         self.forget = forget
         self.disabled = None  # the reason why this model's blocks run eagerly (e.g. weights whose kernels cannot be captured), or None
-        self.reported = False
+        self.reported, self.captures = False, 0
         self.checked = set()  # (block, method, signature) whose capture checked the reads
         self.blas = {}  # (block, method, signature) -> whether its eager warmup used cuBLAS (its capture stream then needs the workspaces)
         self.state = {}  # name -> tensors that the graphs read besides weights and arguments (register_state): kept across clear()
@@ -553,7 +592,7 @@ class BlockGraphs:
     def clear(self):
         # entries: key -> graph; keys: block -> its keys, least recently used first; static: buffers shared by the graphs
         self.entries, self.keys, self.static, self.pool = {}, {}, {}, None
-        self.static_by_buffer, self.static_by_base = {}, {}
+        self.static_by_buffer, self.static_by_base, self.extra_roots = {}, {}, {}
         self.borrowed = set()
         self._tensor_refs = {}
         self.spans, self.span_runs = {}, {}  # (tower, start, stop, step) -> _Span; (tower, step) -> the runs its spans were made for
@@ -634,7 +673,7 @@ class BlockGraphs:
             raise ValueError(f"CUDA graph block call of '{self.name}' ({type(module).__name__}): argument {name} is a view whose elements share memory "
                              f"(shape {tuple(leaf.shape)}, stride {leaf.stride()}, e.g. from expand), which a graph's static buffer cannot hold. Pass the "
                              f"unexpanded tensor and expand it inside the block's forward (no cost), or make it contiguous before the call.") from None
-        key = (id(module), spec, signature, extra_signature, self.weights_key(module), tuple(provider() for provider in _key_providers), tuple(static_key), method)
+        key = (id(module), spec if _SPEC_HASHABLE else repr(spec), signature, extra_signature, self.weights_key(module), tuple(provider() for provider in _key_providers), tuple(static_key), method)
         keys = self.keys.setdefault(id(module), {})
         entry = self.entries.get(key, None)
         lifetimes = None
@@ -861,6 +900,8 @@ class BlockGraphs:
             self.static_by_buffer, self.static_by_base = {}, {}
             for key, buffer in self.static.items():
                 self._index_buffer(key, buffer)
+            storages = {_storage(buffer) for buffer in self.static.values()}
+            self.extra_roots = {slot: root for slot, root in self.extra_roots.items() if _storage(root) in storages}
         self.borrowed.intersection_update(used)
         refs = {}
         for buffer in self.static.values():
@@ -879,10 +920,13 @@ class BlockGraphs:
         # static buffers, shared by the graphs (they run one after the other) for each signature and occurrence in a call; not inference
         # tensors, whose version counters show the in-place updates of the arguments. An argument whose elements share memory (an expanded
         # view) cannot be copied into a buffer of its layout: arguments=True reports it (checked only when a buffer is created).
+        # Extra inputs (LoRA factors of any rank, source None) are filled before each replay: those of one size class share memory between
+        # calls, as graphs run one after the other, instead of a buffer per shape that would keep nearly all of them in VRAM.
         counts, keys, buffers = {} if counts is None else counts, [], []
         for signature, source in zip(signatures, sources):
-            base = (signature, counts.setdefault(signature, 0))
-            counts[signature] += 1
+            slot = _extra_slot(signature) if arguments and source is None else None
+            base = (signature, counts.setdefault(signature, 0)) if slot is None else (("extra", signature), counts.setdefault(slot, 0))
+            counts[signature if slot is None else slot] += 1
             # Prefix tensors can keep hundreds of adopted buffers alive. A replay usually names an existing buffer exactly;
             # look it up directly instead of scanning every other layer's buffers for every argument.
             matching = None if source is None else next((k for k in self.static_by_buffer.get((signature, source.data_ptr()), ())
@@ -903,6 +947,12 @@ class BlockGraphs:
                 if source is not None and _adoptable(source, self):
                     self.static[key] = _buffer_alias(source)
                     self.borrowed.add(key)
+                elif slot is not None:
+                    with torch.inference_mode(False):
+                        root = self.extra_roots.get((*slot, base[1]))
+                        if root is None:
+                            root = self.extra_roots[(*slot, base[1])] = torch.empty(slot[0], dtype=torch.uint8, device=device)
+                        self.static[key] = root[:math.prod(shape) * dtype.itemsize].view(dtype).view(shape)
                 else:
                     with torch.inference_mode(False):
                         self.static[key] = torch.empty_strided(shape, stride, dtype=dtype, device=device)
@@ -1046,6 +1096,9 @@ class BlockGraphs:
         if not self.reported:
             tqdm.write(f"[MMGP] CUDA graphs of the blocks of '{self.name}' are being captured.")
             self.reported = True
+        self.captures += 1
+        from .offload import report_progress
+        report_progress("Capturing CUDA Graphs", self.captures)
         return entry
 
     def _replay(self, entry, leaves, extras):
