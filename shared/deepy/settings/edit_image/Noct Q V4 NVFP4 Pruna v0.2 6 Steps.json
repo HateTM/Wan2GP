@@ -1,0 +1,24 @@
+{
+ "settings_version": 2.79,
+ "type": "Noct Q V4 NVFP4 Pruna v0.2 6 Steps",
+ "model_type": "qwen_image_21_7B_noct_q_v4_nvfp4",
+ "prompt": "",
+ "negative_prompt": "",
+ "image_mode": 1,
+ "resolution": "1024x1024",
+ "num_inference_steps": 6,
+ "sample_solver": "pruna_v02",
+ "guidance_scale": 1,
+ "batch_size": 1,
+ "video_prompt_type": "KI",
+ "prompt_enhancer": "",
+ "activated_loras": [
+  "https://huggingface.co/PrunaAI/P-Q-Image-2.1/resolve/main/p_q_image_2.1_6_steps_v0.2.safetensors"
+ ],
+ "loras_multipliers": "1",
+ "remove_background_images_ref": 0,
+ "custom_settings": {
+  "qwen21_kv_cache": "Disabled",
+  "rgba": "Disabled"
+ }
+}
