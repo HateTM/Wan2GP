@@ -145,6 +145,8 @@ Other specialist entries remain in the selector. Use their own Help for required
 
 Its optional **KV Cache** trades extra GPU memory for faster denoising; its **INT8** choice gives the same speedup in about half that memory. **Viggle Turbo** and **Pruna** acceleration profiles apply the matching adapter, scheduler and step settings; these image accelerators are unrelated to the H3-based Viggle Animate video workflow. Prefer short text in Qwen 2.1 images and proofread it; use a design-oriented model for dense infographics.
 
+Qwen Image 2.1 finetune definitions may also point at native ComfyUI **NVFP4** checkpoints: WanGP detects the FP4 tensor layout automatically and runs it natively on RTX 50xx-class GPUs, with a slower fallback on other hardware. A finetune may override the VAE through *VAE_URLs*, including vendor texture-fix VAEs stored in their native layout.
+
 The older 20B family remains useful:
 
 - **[Qwen Image 2512](modeltype:qwen_image_2512_20B)** for generation and text-heavy images;
