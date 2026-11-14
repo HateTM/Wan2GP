@@ -8,7 +8,7 @@ import torch
 from shared.utils import files_locator as fl
 from shared.utils.hf import build_hf_url
 from shared.utils.gguf_mapping import has_standard_gguf_tensor_names, remap_state_dict_triplet
-from .enhancer import GENERATION, EDITING, SWAP
+from .enhancer import GENERATION, EDITING, EDIT_INSTRUCTION_TEXT, SWAP
 
 
 ENCODER = "Qwen3-VL-8B-Instruct"
@@ -105,7 +105,7 @@ class family_handler:
             "prompt_enhancer_def": {"selection": ["T", "TI", "T1", "TI1"], "labels": {"T": "A New Image Description using existing Text Prompt", "TI": "An Image Edit using existing Text Prompt and {image_inputs}", "T1": "An Editing Instruction using existing Text Prompt", "TI1": "A New Composition using existing Text Prompt and {image_inputs}"}, "default": ""},
             "text_prompt_enhancer_instructions": GENERATION,
             "image_prompt_enhancer_instructions": EDITING,
-            "text_prompt_enhancer_instructions1": EDITING,
+            "text_prompt_enhancer_instructions1": EDIT_INSTRUCTION_TEXT,
             "image_prompt_enhancer_instructions1": EDITING,
             "text_prompt_enhancer_max_tokens": 768,
             "image_prompt_enhancer_max_tokens": 768,

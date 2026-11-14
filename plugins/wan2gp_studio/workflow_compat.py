@@ -901,18 +901,24 @@ class WorkflowCompat:
                 # node's terminal state is "error"/"cancelled"/"done", so the
                 # decision cannot be derived from record["nodes"] anymore.
                 # A release never fires while another workflow is still
-                # running, so it cannot interfere with concurrent work.
-                others_active = any(
-                    other is not record and other.get("status") == "running"
-                    for other in self._runs.values()
-                )
-                if not others_active:
-                    if record["status"] in ("failed", "cancelled") and record.get("generation_started"):
-                        always = getattr(runner, "release_loaded_model", None)
-                        if callable(always):
-                            always(self.host)
-                    elif callable(honoring_release):
-                        honoring_release(self.host, graph)
+                # running, so it cannot interfere with concurrent work. The
+                # check and the release hold self._lock so that a run that
+                # registers between the check and the release cannot start
+                # loading a model that is about to be unloaded (start_run
+                # registers under the same lock; the release is slow, so
+                # holding the lock here serializes it against new runs).
+                with self._lock:
+                    others_active = any(
+                        other is not record and other.get("status") == "running"
+                        for other in self._runs.values()
+                    )
+                    if not others_active:
+                        if record["status"] in ("failed", "cancelled") and record.get("generation_started"):
+                            always = getattr(runner, "release_loaded_model", None)
+                            if callable(always):
+                                always(self.host)
+                        elif callable(honoring_release):
+                            honoring_release(self.host, graph)
             except Exception as exc:
                 logger.warning("model release failed for run %s: %s", record["id"], exc)
             if self._run_finished_callback is not None:
