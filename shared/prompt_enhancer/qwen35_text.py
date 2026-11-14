@@ -127,6 +127,10 @@ def _resolve_gguf_linear_attention_layout_from_filename(model_path: str) -> tupl
         "qwen3.8-9b-uncensored-heretic-q8-0.gguf",
     }:
         return True, True, False
+    # YokaiOfDusk's pruned-vocab Qwen3.8-9B Distill GGUFs (heretic merges and plain) share the
+    # Noobito45 Heretic tensor layout (identical tensor inventory verified against the Q8_0 Heretic checkpoint)
+    if filename.startswith(("qwen38-9b-ruen-", "qwen38-9b-ru-", "heretic-lora-")):
+        return True, True, False
     if filename in {
         "qwen3.5-9b-abliterated-text-q4-k-m.gguf",
         "qwen3.5-4b-abliterated-text-q4-k-m.gguf",

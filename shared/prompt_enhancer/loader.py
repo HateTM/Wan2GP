@@ -43,7 +43,7 @@ def ensure_prompt_enhancer_assets(process_files_def, enhancer_enabled: int, qwen
     if enhancer_enabled in (1, 2):
         process_files_def(**florence_llama_download_def(enhancer_enabled))
         return
-    if enhancer_enabled in (3, 4, 5, 6, 7):
+    if enhancer_enabled in (3, 4, 5, 6, 7, 8):
         from .qwen35_vl import ensure_qwen35_prompt_enhancer_assets, get_qwen35_prompt_enhancer_variant
 
         # Auto: the drafter's files whenever it may run (the choice is made at load, from the model's fit in VRAM)
@@ -139,7 +139,7 @@ def load_prompt_enhancer_runtime(process_files_def, enhancer_enabled: int, qwen_
 
     ensure_prompt_enhancer_assets(process_files_def, enhancer_enabled=enhancer_enabled, qwen_backend=qwen_backend, speculative_decoding=speculative_decoding)
 
-    if enhancer_enabled in (3, 4, 5, 6, 7):
+    if enhancer_enabled in (3, 4, 5, 6, 7, 8):
         kernels_warning = gguf_kernels_warning() if torch.cuda.is_available() else ""  # the kernels exist for NVIDIA and AMD GPUs only
         if kernels_warning:
             tqdm.write(f"\033[91m[Prompt Enhancer / Deepy] {kernels_warning}\033[0m")

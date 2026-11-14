@@ -39,6 +39,7 @@ from .assets import (
     QWEN35_VISION_FILENAME,
     QWEN38_VARIANT_27B,
     QWEN38_VARIANT_9B,
+    QWEN38_VARIANT_9B_DISTIL_RU,
     QWEN38_VARIANT_FLASH_NEXT,
 )
 from .qwen3_5 import load_qwen35_model_class
@@ -75,6 +76,8 @@ QWEN35_VARIANT_ALIASES = {
     "qwen3.8-27b uncensored": QWEN38_VARIANT_27B,
     "qwen3.8-9b": QWEN38_VARIANT_9B,
     "qwen3.8-9b uncensored": QWEN38_VARIANT_9B,
+    "qwen3.8-9b distil ru": QWEN38_VARIANT_9B_DISTIL_RU,
+    "qwen3.8-9b distil ru uncensored": QWEN38_VARIANT_9B_DISTIL_RU,
     "qwen3.8 flash-next": QWEN38_VARIANT_FLASH_NEXT,
 }
 
@@ -91,7 +94,7 @@ def get_qwen35_assets_dir_name(variant: str | None = None) -> str:
 
 
 def get_qwen35_prompt_enhancer_variant(model_no) -> str:
-    return {3: QWEN35_VARIANT_4B, 4: QWEN35_VARIANT_9B, 5: QWEN38_VARIANT_27B, 6: QWEN38_VARIANT_9B, 7: QWEN38_VARIANT_FLASH_NEXT}[int(model_no)]
+    return {3: QWEN35_VARIANT_4B, 4: QWEN35_VARIANT_9B, 5: QWEN38_VARIANT_27B, 6: QWEN38_VARIANT_9B, 7: QWEN38_VARIANT_FLASH_NEXT, 8: QWEN38_VARIANT_9B_DISTIL_RU}[int(model_no)]
 
 
 def get_qwen35_quantization(backend: str, variant: str | None = None) -> str:
@@ -1067,7 +1070,15 @@ def _unload_prompt_enhancer_vl_runtime(self):
 
 
 def get_qwen35_vision_path(assets_dir: str, variant: str | None = None) -> str:
-    filename = get_qwen35_variant_spec(variant)["vision_filename"]
+    spec = get_qwen35_variant_spec(variant)
+    filename = spec["vision_filename"]
+    if spec.get("vision_shared"):
+        # the tower lives in the folder of the variant it is shared with (e.g. the Qwen3.5-9B vision
+        # tower of the Qwen3.8-9B Distil RU variant)
+        shared_dir = _resolve_qwen35_assets_dir(None, variant=QWEN35_VARIANT_9B)
+        shared_path = _resolve_qwen35_checkpoint_file(shared_dir, filename, variant=QWEN35_VARIANT_9B, error_if_none=False)
+        if shared_path is not None:
+            return shared_path
     return _resolve_qwen35_checkpoint_file(assets_dir, filename, variant=variant, error_if_none=False)
 
 

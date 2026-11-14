@@ -34,6 +34,7 @@ QWEN35_VARIANT_9B = "9b"
 QWEN35_VARIANT_4B = "4b"
 QWEN38_VARIANT_27B = "27b"
 QWEN38_VARIANT_9B = "qwen38_9b"
+QWEN38_VARIANT_9B_DISTIL_RU = "qwen38_9b_distil_ru"
 QWEN38_27B_ASSETS_REPO = "Qwen/Qwen3.8-27B"
 QWEN38_27B_GGUF_REPO = QWEN35_ABLITERATED_REPO
 QWEN38_27B_GGUF_REPO_SUBFOLDER = "Qwen3_8_27B_Uncensored"
@@ -44,6 +45,8 @@ QWEN38_27B_TEXT_GGUF_PTQ1_FILENAME = "Ternary-Bonsai-2-27B-Abliterated-PTQ1_0.gg
 QWEN38_27B_MTP_GGUF_FILENAME = "Qwen3.8-27B-Uncensored-MTP-Q4_K_M.gguf"
 QWEN38_9B_TEXT_GGUF_FILENAME = "Qwen3.8-9B-Uncensored-Heretic-Q4_K_M.gguf"
 QWEN38_9B_TEXT_GGUF_Q8_FILENAME = "Qwen3.8-9B-Uncensored-Heretic-Q8_0.gguf"
+# YokaiOfDusk's pruned-vocabulary (94k ru+en) GGUFs of the Qwen3.8-9B Distill with the heretic-LoRA merge.
+QWEN38_9B_DISTIL_RU_GGUF_FILENAME = "heretic-lora-ruen-Q6_K.gguf"
 BONSAI2_27B_MTP_GGUF_FILENAME = "Ternary-Bonsai-2-27B-MTP-Q8_0.gguf"
 QWEN38_27B_VISION_FILENAME = "Qwen3.8-27B-Uncensored-vision-f16.gguf"
 QWEN38_VARIANT_FLASH_NEXT = "flash_next"
@@ -129,6 +132,30 @@ QWEN35_VARIANT_SPECS = {
         "text_gguf_q8_filename": QWEN38_9B_TEXT_GGUF_Q8_FILENAME,
         "vision_filename": QWEN35_VISION_FILENAME,
         "backend": "gguf",
+        "tie_word_embeddings": False,
+        "supports_mtp": True,
+        "mtp_speculative_tokens": 2,
+        "mtp_speculative_sampling_tokens": 2,
+        "mtp_speculative_confidence": 0.0,
+    },
+    QWEN38_VARIANT_9B_DISTIL_RU: {
+        # YokaiOfDusk's Qwen3.8-9B Distill with the heretic-LoRA merge and a pruned 94k ru+en vocabulary
+        # (YokaiOfDusk/Qwen3.8-9b-distil-ru, imatrix по русскому корпусу). The pruned tokenizer lives only
+        # inside the GGUF: the assets folder's tokenizer.json/tokenizer_config.json/config.json are generated
+        # from it, so this variant cannot share the Qwen3.5-9B assets folder. The MTP layer is embedded
+        # (blk.32), as in the other Qwen3.8-9B GGUFs; there is no draft-vocab truncation row limit.
+        "display_name": "Qwen3.8-9B Distil RU Uncensored",
+        "assets_dir_name": "Qwen3_8_9B_Distil_RU",
+        "root_repo": "YokaiOfDusk/Qwen3.8-9b-distil-ru",
+        "repo_subfolder": "",
+        "root_files": [],
+        "text_repo": None,
+        "text_required_files": [],
+        "gguf_repo": "YokaiOfDusk/Qwen3.8-9b-distil-ru",
+        "text_gguf_q8_filename": QWEN38_9B_DISTIL_RU_GGUF_FILENAME,
+        "vision_filename": QWEN35_VISION_FILENAME,
+        "vision_shared": True,  # the Qwen3.5-9B vision tower resolves from the Qwen3_5_9B_Abliterated folder
+        "backend": "gguf_q8",
         "tie_word_embeddings": False,
         "supports_mtp": True,
         "mtp_speculative_tokens": 2,
@@ -249,13 +276,14 @@ def qwen_download_defs(spec, backend, speculative_decoding=False):
             canonical = os.path.join(spec["assets_dir_name"], checkpoint_folder, filename)
             definition["extraRelPaths"] = {canonical: [os.path.join(spec["assets_dir_name"], filename)]}
             defs.append(definition)
-        shared_files.append(spec["vision_filename"])
+        if not spec.get("vision_shared"):
+            shared_files.append(spec["vision_filename"])
         if checkpoint_folder == folder:
             shared_files.append(filename)
         shared_files.extend(draft)
     defs.append(_files(spec["root_repo"], folder, shared_files, None if folder else spec["assets_dir_name"]))
     if spec["root_repo"] != spec["gguf_repo"]:
-        defs.append(_files(spec["gguf_repo"], checkpoint_folder, [spec["vision_filename"], filename, *spec.get("text_gguf_extra_files", ()), *draft]))
+        defs.append(_files(spec["gguf_repo"], checkpoint_folder, [*([] if spec.get("vision_shared") else [spec["vision_filename"]]), filename, *spec.get("text_gguf_extra_files", ()), *draft]))
     if spec.get("text_required_files"):
         defs.append(_files(spec["text_repo"], folder, spec["text_required_files"]))
     return defs
@@ -284,7 +312,7 @@ def checkpoint_inventory():
                     source = definition["sourceFolderList"][0]
                     target = definition.get("targetFolderList", [""])[0]
                     for filename in definition["fileList"][0]:
-                        if filename in (spec[key], spec["vision_filename"]):
+                        if filename in (spec[key], spec.get("vision_filename")):
                             path = "/".join(part for part in (target, source, filename) if part)
                             aliases[path] = [filename, f"{spec['assets_dir_name']}/{filename}"]
                 model = bonsai if backend == "gguf_ptq1" else spec["display_name"]

@@ -241,6 +241,14 @@ In **Editor** mode:
 
 After creation, import, save, or delete, WanGP refreshes the model list automatically.
 
+## Local Notes (this fork)
+
+### Noct Q V4.0 Base (Uncensored Realism)
+`finetunes/qwen_image_21_7B_noct_q_v4.json` resolves the checkpoint locally from `ckpts/qwen_image_21/noct_q_v4_base_nvfp4.safetensors` (NVFP4, from sjoe1244/Noct-Q-V4-Base-NVFP4). The earlier INT8 ConvRot file (`noctQ_V4_int8_convrot.safetensors`) was removed; if the NVFP4 file is missing, download it from https://huggingface.co/sjoe1244/Noct-Q-V4-Base-NVFP4 and place it under `ckpts/qwen_image_21/`.
+
+### Qwen3.8-9B Distil RU Uncensored prompt enhancer
+A local prompt enhancer / Deepy engine variant (id 8, `qwen38_9b_distil_ru`) built on YokaiOfDusk/Qwen3.8-9b-distil-ru: heretic-lora-ruen-Q6_K GGUF (6.07 GiB) with a pruned 94k ru+en vocabulary (imatrix по русскому корпусу), embedded MTP layer, sharing the Qwen3.5-9B vision tower. The pruned tokenizer ships only inside the GGUF: `tokenizer.json` / `tokenizer_config.json` / `config.json` in `ckpts/Qwen3_8_9B_Distil_RU/` are generated from the GGUF metadata (vocab + merges + eos/pad ids); regenerate them with the local build script if the folder is lost. About 3 GB lighter and faster on Russian than the full-vocab Qwen3.8-9B Heretic GGUFs (removed); select it in Configuration → Prompt Enhancer / Deepy.
+
 ---
 
 > Applies to: Creating and managing custom model definitions and weights. Model-definition fields and conversion commands concern model setup; per-generation settings are specified separately.

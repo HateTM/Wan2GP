@@ -160,9 +160,11 @@ QWEN35_PROMPT_ENHANCER_IDS = (3, 4)
 QWEN38_PROMPT_ENHANCER_ID = 5
 QWEN38_9B_PROMPT_ENHANCER_ID = 6
 QWEN38_FLASH_NEXT_PROMPT_ENHANCER_ID = 7
-QWEN_PROMPT_ENHANCER_IDS = (3, 4, 5, 6, 7)
+QWEN38_9B_DISTIL_RU_PROMPT_ENHANCER_ID = 8
+QWEN_PROMPT_ENHANCER_IDS = (3, 4, 5, 6, 7, 8)
 QWEN35_QUANTIZATION_CHOICES = [("Quanto Int8 (recommended, better quality)", "quanto_int8"), ("GGUF Q4 (less VRAM/RAM & faster if kernels are installed, but worse quality)", "gguf")]
 QWEN38_9B_QUANTIZATION_CHOICES = [("GGUF Uncensored Q4_K_M (default, fits 8 GB of VRAM)", "gguf"), ("GGUF Uncensored Q8_0 (closest to full precision, needs about 12 GB of VRAM)", "gguf_q8")]
+QWEN38_9B_DISTIL_RU_QUANTIZATION_CHOICES = [("GGUF heretic-lora Q6_K, pruned 94k ru+en vocab (about 6 GB, lighter and faster on Russian)", "gguf_q8")]
 QWEN38_QUANTIZATION_CHOICES = [("GGUF Uncensored Q4 (highest quality and VRAM/RAM use, for 24 GB of VRAM or more)", "gguf"), ("GGUF Uncensored IQ3_S (Q3, middle quality and VRAM/RAM use, for 16 GB of VRAM or more)", "gguf_q3"), ("GGUF Uncensored Q2 (lower quality and VRAM/RAM use)", "gguf_q2"), ("Bonsai 2 Abliterated PTQ1_0 (Q1, ternary, lowest VRAM/RAM use, for less than 16 GB of VRAM, requires kernels 1.0.22+)", "gguf_ptq1")]
 
 
@@ -173,6 +175,8 @@ def prompt_enhancer_quantization_ui_state(enhancer_enabled, quantization):
         return QWEN38_QUANTIZATION_CHOICES, value, True
     if enhancer_enabled == QWEN38_9B_PROMPT_ENHANCER_ID:
         return QWEN38_9B_QUANTIZATION_CHOICES, quantization if quantization in ("gguf", "gguf_q8") else "gguf", True
+    if enhancer_enabled == QWEN38_9B_DISTIL_RU_PROMPT_ENHANCER_ID:
+        return QWEN38_9B_DISTIL_RU_QUANTIZATION_CHOICES, "gguf_q8", True
     if enhancer_enabled == QWEN38_FLASH_NEXT_PROMPT_ENHANCER_ID:
         return [("GGUF IQ3_S", "gguf_q3")], "gguf_q3", True
     value = "gguf" if quantization in ("gguf", "gguf_q3", "gguf_q2", "gguf_ptq1") else "quanto_int8"
@@ -1278,7 +1282,7 @@ class ConfigTabPlugin(WAN2GPPlugin):
             if deepy_enabled_choice:
                 if not deepy_remote and not qwen_local:
                     raise ValueError("Florence 2 is not compatible with Deepy. Select a Qwen model or disable Deepy before saving.")
-                if not deepy_remote and deepy_type_choice == DEEPY_TYPE_PRIME and enhancer_enabled_choice not in (QWEN38_PROMPT_ENHANCER_ID, QWEN38_9B_PROMPT_ENHANCER_ID, QWEN38_FLASH_NEXT_PROMPT_ENHANCER_ID):
+                if not deepy_remote and deepy_type_choice == DEEPY_TYPE_PRIME and enhancer_enabled_choice not in (QWEN38_PROMPT_ENHANCER_ID, QWEN38_9B_PROMPT_ENHANCER_ID, QWEN38_9B_DISTIL_RU_PROMPT_ENHANCER_ID, QWEN38_FLASH_NEXT_PROMPT_ENHANCER_ID):
                     raise ValueError("Deepy Prime requires a Qwen3.8 VL model.")
                 if qwen_local:
                     deepy_compaction_thinking_choice = deepy_compaction_type_choice == DEEPY_COMPACTION_CHOICE_THINKING
