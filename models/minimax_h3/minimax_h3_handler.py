@@ -2,6 +2,7 @@
 """WanGP family handler for MiniMax H3."""
 
 import os
+import shutil
 import sys
 from decimal import Decimal
 
@@ -26,6 +27,8 @@ from .minimax_h3_main import (AUDIO_VAE_FILE, LATENT_UPSCALER_FILE, LATENT_UPSCA
 from .p_h3_image import (P_H3_IMAGE_ARCHITECTURE, P_H3_IMAGE_FOLDER, P_H3_IMAGE_MAX_IMAGES, P_H3_IMAGE_REPO_ID, P_H3_IMAGE_STEPS, P_H3_IMAGE_SWITCH_THRESHOLD,
                          P_H3_IMAGE_TEXT_ENCODER_BF16, P_H3_IMAGE_TEXT_ENCODER_FOLDER,
                          P_H3_IMAGE_TEXT_ENCODER_INT8, P_H3_IMAGE_VAE_FILE, P_H3_IMAGE_VAE_INT8_FILE, query_p_h3_image_def)
+from .h3_image import (H3_IMAGE_ARCHITECTURE, H3_IMAGE_ARCHITECTURES, H3_IMAGE_FAMILY, H3_IMAGE_FOLDER, H3_IMAGE_MAX_IMAGES, H3_IMAGE_MODEL,
+                       H3_IMAGE_PRUNED_ARCHITECTURE, H3_IMAGE_STEPS, H3_IMAGE_VAE_FILE, query_h3_image_def)
 from .hyperflow import HYPERFLOW_DEFAULT_STEPS, HYPERFLOW_STEPS, HYPERFLOW_VIDEO_SHIFT
 from .pdd import PDD_BLOCK_SIZE, PDD_NUM_STEPS
 from .pika import PIKA_SOLVER, PIKA_STEPS, PIKA_VIDEO_SHIFT
@@ -58,7 +61,10 @@ DEEPY_TEMPLATE_RENAMES_1_31 = {  # config 1.31: "Turbo" left the names of the H3
     "gen_video_with_speech": {"MiniMax H3 FL2VA Pruned Turbo Lightx2v 8 Steps With Sound": "MiniMax H3 FL2VA Pruned Lightx2v 8 Steps With Sound",
                               "MiniMax H3 Ref2VA Pruned Turbo Lightx2v 8 Steps With Sound": "MiniMax H3 Ref2VA Pruned Lightx2v 8 Steps With Sound"},
 }
+H3_IMAGE_OLD_LORA_KEY = "minimax_h3_image"  # H3-Image's own LoRA folder before it shared the H3 one
+H3_IMAGE_LORA_SUFFIX = "_h3_image"
 _fp32_regenerate_checked = False
+_h3_image_loras_merged = False
 
 
 def _remove_fp32_regenerate_lora(lora_key):
@@ -72,6 +78,49 @@ def _remove_fp32_regenerate_lora(lora_key):
     if os.path.isfile(path) and os.path.getsize(path) == REGENERATE_LORA_FP32_SIZE:
         os.remove(path)
         tqdm.write(f"MiniMax H3: deleted the old FP32 Open-H3 Regenerate 2K LoRA '{path}' (12.5 GB). Its BF16 version (6.2 GB) will be downloaded the next time it is used.")
+
+
+def _merge_folder(source, target, counts):
+    """Moves the content of source into target: a file with the same name and size is a duplicate and is deleted, another one with the same name gets a suffix."""
+    os.makedirs(target, exist_ok=True)
+    for entry in list(os.scandir(source)):
+        dest = os.path.join(target, entry.name)
+        if entry.is_dir(follow_symlinks=False) and os.path.isdir(dest):
+            _merge_folder(entry.path, dest, counts)
+            continue
+        if not os.path.lexists(dest):
+            shutil.move(entry.path, dest)
+            counts["moved"] += 1
+            continue
+        if entry.is_file(follow_symlinks=False) and os.path.isfile(dest) and os.path.getsize(dest) == entry.stat().st_size:
+            os.remove(entry.path)
+            counts["deleted"] += 1
+            continue
+        stem, ext = os.path.splitext(entry.name)
+        dest, n = os.path.join(target, f"{stem}{H3_IMAGE_LORA_SUFFIX}{ext}"), 1
+        while os.path.lexists(dest):
+            n += 1
+            dest = os.path.join(target, f"{stem}{H3_IMAGE_LORA_SUFFIX}_{n}{ext}")
+        shutil.move(entry.path, dest)
+        counts["renamed"] += 1
+    os.rmdir(source)
+
+
+def _merge_h3_image_loras(lora_key):
+    """Once per session: H3-Image shares the H3 LoRA folder; move what its former folder still holds into it."""
+    global _h3_image_loras_merged
+    wgp = sys.modules.get("wgp")
+    if _h3_image_loras_merged or wgp is None:  # outside WanGP there is no LoRA folder to merge
+        return
+    _h3_image_loras_merged = True
+    old_dir = wgp.args.lora_config.get(H3_IMAGE_OLD_LORA_KEY, os.path.join(wgp.get_lora_root(), H3_IMAGE_OLD_LORA_KEY))  # not resolve_lora_dir: it creates the folder
+    new_dir = resolve_lora_dir(lora_key, wgp.get_lora_root(), wgp.args.lora_config)
+    if not os.path.isdir(old_dir) or os.path.normcase(os.path.abspath(old_dir)) == os.path.normcase(os.path.abspath(new_dir)):
+        return
+    counts = {"moved": 0, "deleted": 0, "renamed": 0}
+    _merge_folder(old_dir, new_dir, counts)
+    tqdm.write(f"MiniMax H3: H3-Image now shares the MiniMax H3 LoRA folder. Merged '{old_dir}' into '{new_dir}': {counts['moved']} moved, "
+               f"{counts['deleted']} identical copies deleted, {counts['renamed']} kept under a '{H3_IMAGE_LORA_SUFFIX}' suffix (same name, different file).")
 TEXT_ENCODER_VARIANTS = {
     "gguf_q2_k": [TEXT_ENCODER_GGUF_Q2],
     "gguf_q4_k_m": [TEXT_ENCODER_GGUF_Q4],
@@ -104,7 +153,7 @@ FL2VA_DEEPY_INFOS = """Generate video and stereo sound from `prompt`. `image_sta
 
 Control Video (`video_guide`) is split across sliding windows, each window receiving its own section. `GV` (Denoise Control Video) edits its frames: lower Denoising Strength preserves more source content; Whole Frame at strength 1 gives full freedom. A mask selects the edited area. `VU` (In-Context Guide) supplies its unchanged frames as `<Video 1>` for LoRAs trained on FL2VA to transform a source video; name it `<Video 1>` in the prompt. Without such a LoRA, FL2VA is not trained to follow `VU`; for motion/appearance references, use Ref2VA Reference Video. Inject Frames uses ordered `image_refs` and explicit positions (`1` = first frame, `L` = last frame of the window, `X` = skip a window without consuming an image). A frame on a window's first or last frame acts as its start or end image; frames inside the overlap are unused. Per window, pictures are numbered: start or continued frame (`<Picture 1>`), end image, then that window's injected frames by time.
 
-`audio_prompt_type`: empty = generate video and audio; `A` = `audio_guide` is the soundtrack; `K` = the control video's audio track is the soundtrack (`GV` or `VU`); `2` = keep control frames and generate their audio (`GV`). The video follows a soundtrack and WanGP keeps it as the output audio when it covers the video; a shorter one permits generated sound afterward. For visible speech in soundtrack mode, identify the character and explicitly request `speaking with natural lip movements synchronized` or equivalent lip-sync wording, without mentioning a supplied audio track or its language. Do not write the spoken words (no `<d>` dialogue): given a written line, H3 voices its own dialogue and the mouth often stops following the soundtrack. Keep the speaker's action to speaking: smiles, gestures and nods compete with the mouth. Exact lip sync is not guaranteed.
+`audio_prompt_type`: empty = generate video and audio; `AS` = `audio_guide` is the soundtrack; `KS` = the control video's audio track is the soundtrack (`GV` or `VU`); `A` or `K` alone mean the same; `2` = keep control frames and generate their audio (`GV`). The video follows a soundtrack and WanGP keeps it as the output audio when it covers the video; a shorter one permits generated sound afterward. For visible speech in soundtrack mode, identify the character and explicitly request `speaking with natural lip movements synchronized` or equivalent lip-sync wording, without mentioning a supplied audio track or its language. Do not write the spoken words (no `<d>` dialogue): given a written line, H3 voices its own dialogue and the mouth often stops following the soundtrack. Keep the speaker's action to speaking: smiles, gestures and nods compete with the mouth. Exact lip sync is not guaranteed.
 
 Use `capabilities` for window limits. WanGP rounds overlap to compatible values (1, 18, 35, ...); `video_length` sets total duration across windows. A window may jump onto an end image its action did not reach; `sliding_window_discard_last_frames` about 5 hides it: the end image of every window but the last is generated after the discarded frames (steers, not shown); the last window ends on its end image. Read `prompt_infos` for H3's structured prompt syntax.
 """
@@ -281,7 +330,7 @@ The branch is guidance-distilled: keep **Guidance** at 1. Upstream demonstration
 See the [ControlNet-Union 2.0 model card](https://huggingface.co/alibaba-pai/MiniMax-H3-Fun-Controlnet-Union-2.0) for upstream details.
 """
 
-CONTROL_DEEPY_INFOS = f"""Generate video and stereo sound from `prompt` guided by a control video (`video_guide`) through the ControlNet-Union branch; the output uses the control video's aspect ratio. `video_prompt_type`: `PV` = Open Pose motion, `DV` = depth, `EV` = Canny edges, `SV` = soft shapes/scribble, `CV` = grayscale recolorize, `V` = video already a control map (HED, MLSD, layout...), `MV` = inpainting only. Add `A` (masked area) or `NA` (non-masked area) with `video_mask` to regenerate only part of the frame; masks need a preprocessing mode or `V` with spatial outpainting enabled. `control_net_weight` (0-2, default 1) sets control strength. Long control videos are split across sliding windows (max 362 frames each). {CONTROL_CONTINUATION_INFOS} `image_start` / `image_end` / `video_source` anchor frames and should match the control video. `audio_prompt_type`: empty = generate audio; `A` = keep `audio_guide` as soundtrack; `K` = keep the control video's soundtrack. For visible speech in soundtrack mode, identify the speaker and explicitly request `speaking with natural lip movements synchronized` or equivalent lip-sync wording, without mentioning a supplied audio track or its language. Do not write the spoken words (no `<d>` dialogue); face pose and gestures compete with speech, and exact lip sync is not guaranteed. Guidance stays 1. Read `prompt_infos` for H3's structured prompt syntax."""
+CONTROL_DEEPY_INFOS = f"""Generate video and stereo sound from `prompt` guided by a control video (`video_guide`) through the ControlNet-Union branch; the output uses the control video's aspect ratio. `video_prompt_type`: `PV` = Open Pose motion, `DV` = depth, `EV` = Canny edges, `SV` = soft shapes/scribble, `CV` = grayscale recolorize, `V` = video already a control map (HED, MLSD, layout...), `MV` = inpainting only. Add `A` (masked area) or `NA` (non-masked area) with `video_mask` to regenerate only part of the frame; masks need a preprocessing mode or `V` with spatial outpainting enabled. `control_net_weight` (0-2, default 1) sets control strength. Long control videos are split across sliding windows (max 362 frames each). {CONTROL_CONTINUATION_INFOS} `image_start` / `image_end` / `video_source` anchor frames and should match the control video. `audio_prompt_type`: empty = generate audio; `AS` = keep `audio_guide` as soundtrack; `KS` = keep the control video's soundtrack; `A` or `K` alone mean the same. For visible speech in soundtrack mode, identify the speaker and explicitly request `speaking with natural lip movements synchronized` or equivalent lip-sync wording, without mentioning a supplied audio track or its language. Do not write the spoken words (no `<d>` dialogue); face pose and gestures compete with speech, and exact lip sync is not guaranteed. Guidance stays 1. Read `prompt_infos` for H3's structured prompt syntax."""
 
 CONTROL_DEEPY_INFOS += """\n\nSpatial outpainting: use `video_prompt_type: V` (Use Control Video as is), the original RGB `video_guide`, and `video_guide_outpainting` as four space-separated percentages (top bottom left right), e.g. `0 0 25 25`. No `video_mask` is needed for borders alone. Alternatively, set `video_guide_outpainting_ratio`, e.g. `16:9`, with `video_guide_outpainting: 0 0 0 0` for balanced expansion; `#` disables expansion. `resolution` is the final canvas. Enabling expansion routes the visible source and automatic border mask through ControlNet inpainting, not FL2VA denoising; no Grouped Rows requirement. With expansion disabled, `V` retains its normal prepared-control-map behavior. For simultaneous interior edits, use `VA` or `MVA` plus `video_mask`; masked pose/depth/edge/shape/grayscale modes also support expansion. Describe the completed scene and new surroundings; the original rectangle is guided, not copied pixel for pixel."""
 
@@ -614,7 +663,8 @@ class family_handler:
     @staticmethod
     def query_supported_types():
         return [FL2VA_ARCHITECTURE, FL2VA_PRUNED_ARCHITECTURE, CONTROL_ARCHITECTURE, CONTROL_PRUNED_ARCHITECTURE,
-                REF2VA_ARCHITECTURE, REF2VA_PRUNED_ARCHITECTURE, TTS_REF2VA_PRUNED_ARCHITECTURE, VIGGLE_ARCHITECTURE, VIGGLE_REMAKE_ARCHITECTURE, P_H3_IMAGE_ARCHITECTURE]
+                REF2VA_ARCHITECTURE, REF2VA_PRUNED_ARCHITECTURE, TTS_REF2VA_PRUNED_ARCHITECTURE, VIGGLE_ARCHITECTURE, VIGGLE_REMAKE_ARCHITECTURE, P_H3_IMAGE_ARCHITECTURE,
+                *H3_IMAGE_ARCHITECTURES]
 
     @staticmethod
     def query_family_maps():
@@ -626,6 +676,7 @@ class family_handler:
             REF2VA_PRUNED_ARCHITECTURE: FL2VA_ARCHITECTURE,
             VIGGLE_ARCHITECTURE: FL2VA_ARCHITECTURE,
             VIGGLE_REMAKE_ARCHITECTURE: FL2VA_ARCHITECTURE,
+            H3_IMAGE_PRUNED_ARCHITECTURE: H3_IMAGE_ARCHITECTURE,
         }, {}
 
     @staticmethod
@@ -633,8 +684,8 @@ class family_handler:
         return "minimax_h3"
 
     @staticmethod
-    def query_family_infos():
-        return {"minimax_h3": (70, "MiniMax H3")}
+    def query_family_infos():  # the image models are listed in their own "H3" group (defaults "group")
+        return {"minimax_h3": (70, "MiniMax H3"), H3_IMAGE_FAMILY: (1175, "H3")}
 
     @staticmethod
     def get_rgb_factors(base_model_type):
@@ -645,6 +696,7 @@ class family_handler:
     @staticmethod
     def get_lora_dir(base_model_type):
         _remove_fp32_regenerate_lora("minimax_h3")
+        _merge_h3_image_loras("minimax_h3")
         return "minimax_h3"
 
     @staticmethod
@@ -656,6 +708,21 @@ class family_handler:
 
     @staticmethod
     def query_model_def(base_model_type, model_def):
+        if base_model_type in H3_IMAGE_ARCHITECTURES:
+            return query_h3_image_def(base_model_type == H3_IMAGE_PRUNED_ARCHITECTURE, {
+                "text_encoder_folder": TEXT_ENCODER_FOLDER,
+                "text_encoder_URLs": [build_hf_url(REPO_ID, TEXT_ENCODER_FOLDER, filename) for filename in (TEXT_ENCODER_BF16, TEXT_ENCODER_INT8)],
+                "system_configs": {
+                    "_name": "Text Encoder",
+                    "_infos": H3_TEXT_ENCODER_INFOS,
+                    "bf16": {"name": "Qwen3-VL BF16", "text_encoder_URLs": [build_hf_url(REPO_ID, TEXT_ENCODER_FOLDER, TEXT_ENCODER_BF16)]},
+                    "int8": {"name": "Qwen3-VL Quanto INT8", "text_encoder_URLs": [build_hf_url(REPO_ID, TEXT_ENCODER_FOLDER, TEXT_ENCODER_INT8)]},
+                    "nvfp4_awq": {"name": "Qwen3-VL NVFP4 AWQ", "text_encoder_URLs": [build_hf_url(REPO_ID, TEXT_ENCODER_FOLDER, TEXT_ENCODER_NVFP4)]},
+                    "gguf_q4_k_m": {"name": "Qwen3-VL GGUF Q4_K_M", "text_encoder_URLs": [build_hf_url(REPO_ID, TEXT_ENCODER_FOLDER, TEXT_ENCODER_GGUF_Q4)]},
+                    "gguf_q2_k": {"name": "Qwen3-VL GGUF Q2_K", "text_encoder_URLs": [build_hf_url(REPO_ID, TEXT_ENCODER_FOLDER, TEXT_ENCODER_GGUF_Q2)]},
+                    "distilled_4b": DISTILLED_TEXT_ENCODER_CONFIG,
+                },
+            }, H3_DENOISING_PRIORITY_INFOS)
         if base_model_type == P_H3_IMAGE_ARCHITECTURE:  # phase 2 adds the FL2VA LoRA Accelerator when no accelerator has a phase-2 multiplier
             return {**query_p_h3_image_def(H3_DENOISING_PRIORITY_INFOS), TURBO_LORA_KEY: build_hf_url(REPO_ID, "loras", TURBO_LORA_FILE)}
         if base_model_type == VIGGLE_ARCHITECTURE:
@@ -766,7 +833,7 @@ class family_handler:
                 "mask_preprocessing": {"selection": ["", "A", "NA"]},
                 "control_net_weight_name": "Control", "control_net_weight_size": 1,
                 "video_guide_label": "Control Video",
-                "audio_prompt_type_sources": {**result["audio_prompt_type_sources"], "selection": ["", "A", "K"], "letters_filter": "AK"},
+                "audio_prompt_type_sources": {**result["audio_prompt_type_sources"], "selection": ["", "AS", "KS"], "letters_filter": "AKS"},
             })
             return result
         if base_model_type == TTS_REF2VA_PRUNED_ARCHITECTURE:
@@ -801,7 +868,6 @@ class family_handler:
             **({"specialities": [{"name": "character consistency", "aliases": ["identity preservation"]}, {"name": "motion transfer", "description": "Transfer motion or camera from reference videos to image-reference characters."}]} if reference_mode else {}),
             "fps": 24,
             "v2i_switch_supported": True,
-            "image_batch_size_max": 1,
             "prompt_enhancer_video_duration": True,
             "frames_minimum": 107,
             "frames_steps": 17,
@@ -1060,14 +1126,14 @@ class family_handler:
                 "audio_prompt_choices": True,
                 "audio_guide_label": "Source Audio / Soundtrack",
                 "audio_prompt_type_sources": {
-                    "selection": ["", "A", "K", "2"],
+                    "selection": ["", "AS", "KS", "2"],  # AS / KS as in Ref2VA; A or K alone, saved before, still keep the soundtrack (fix_settings adds S)
                     "labels": {
                         "": "Generate Video and Audio from Text Prompt",
-                        "A": "Generate Video based on Soundtrack and Text Prompt (Soundtrack Kept)",
-                        "K": "Generate Video based on Control Video + its Audio Track and Text Prompt (Soundtrack Kept)",
+                        "AS": "Generate Video based on Soundtrack and Text Prompt (Soundtrack Kept)",
+                        "KS": "Generate Video based on Control Video + its Audio Track and Text Prompt (Soundtrack Kept)",
                         "2": "Generate Audio based on Control Video and Text Prompt",
                     },
-                    "letters_filter": "AK2",
+                    "letters_filter": "AKS2",
                     "label": "Audio Source",
                     "show_label": True,
                     "default": "",
@@ -1125,6 +1191,15 @@ class family_handler:
 
     @staticmethod
     def validate_generative_settings(base_model_type, model_def, inputs):
+        if int(inputs["image_mode"]) > 0 and int(inputs["batch_size"]) > 1:  # images denoised together share one schedule and the standard attention
+            if int(inputs["guidance_phases"]) > 1:
+                return "MiniMax H3 generates several images at once in one phase: set Number of Images to 1 for two phases"
+            if inputs["skip_steps_cache_type"]:
+                return "MiniMax H3 generates several images at once without step skipping"
+        if base_model_type in H3_IMAGE_ARCHITECTURES:
+            if len(inputs["image_refs"] or []) > H3_IMAGE_MAX_IMAGES:
+                return f"H3-Image edits with at most {H3_IMAGE_MAX_IMAGES} images"
+            return None
         if base_model_type == P_H3_IMAGE_ARCHITECTURE:
             if len(inputs["image_refs"] or []) > P_H3_IMAGE_MAX_IMAGES:
                 return f"P-H3-Image edits with at most {P_H3_IMAGE_MAX_IMAGES} images"
@@ -1434,6 +1509,12 @@ class family_handler:
 
     @staticmethod
     def query_model_files(computeList, base_model_type, model_def=None):
+        if base_model_type in H3_IMAGE_ARCHITECTURES:  # H3's text encoder, unchanged, or Pruna's distilled one
+            if model_def.get("text_encoder_folder") == P_H3_IMAGE_TEXT_ENCODER_FOLDER:
+                return [{"repoId": REPO_ID, "sourceFolderList": [H3_IMAGE_FOLDER], "fileList": [[H3_IMAGE_VAE_FILE.rsplit("/", 1)[-1]]]},
+                        {"repoId": P_H3_IMAGE_REPO_ID, "sourceFolderList": [P_H3_IMAGE_TEXT_ENCODER_FOLDER], "fileList": [["config.json", "tokenizer.json", "tokenizer_config.json"]]}]
+            return [{"repoId": REPO_ID, "sourceFolderList": [H3_IMAGE_FOLDER, TEXT_ENCODER_FOLDER],
+                     "fileList": [[H3_IMAGE_VAE_FILE.rsplit("/", 1)[-1]], ["config.json", "tokenizer.json", "tokenizer_config.json", "preprocessor_config.json", "vocab.json"]]}]
         if base_model_type == P_H3_IMAGE_ARCHITECTURE:
             vae_file = model_def.get("video_vae_file", P_H3_IMAGE_VAE_FILE)
             return [{"repoId": P_H3_IMAGE_REPO_ID, "sourceFolderList": [P_H3_IMAGE_FOLDER, P_H3_IMAGE_TEXT_ENCODER_FOLDER],
@@ -1491,17 +1572,18 @@ class family_handler:
         pdd = model_def.get("pdd", False)
         viggle = base_model_type == VIGGLE_ARCHITECTURE
         remake_mode = model_def.get("viggle_remake_mode", "swap") if base_model_type == VIGGLE_REMAKE_ARCHITECTURE else None
-        image_model = base_model_type == P_H3_IMAGE_ARCHITECTURE
+        image_model = "p_h3_image" if base_model_type == P_H3_IMAGE_ARCHITECTURE else H3_IMAGE_MODEL if base_model_type in H3_IMAGE_ARCHITECTURES else None
         distilled_text_encoder = model_def.get("text_encoder_folder") == P_H3_IMAGE_TEXT_ENCODER_FOLDER
         if model_def.get("ptd", False):
             model_filename = list(model_filename) if isinstance(model_filename, (list, tuple)) else [model_filename]
             model_filename.append(fl.locate_file(os.path.join(PTD_FOLDER, PTD_HEAD_FILE)))
-        video_vae_file = model_def.get("video_vae_file", P_H3_IMAGE_VAE_FILE if image_model else VIDEO_VAE_FILE)
+        video_vae_file = model_def.get("video_vae_file", {"p_h3_image": P_H3_IMAGE_VAE_FILE, H3_IMAGE_MODEL: H3_IMAGE_VAE_FILE}.get(image_model, VIDEO_VAE_FILE))
         if VAE_upsampling == X2_VAE_VALUE:  # the X2 decoder of the selected Video VAE replaces it; downloaded once both choices are known
             video_vae_file = model_def.get("x2_vae_file", X2_VAE_FILE)
             process_files_def_if_needed(query_x2_vae_files(video_vae_file), status_text="Downloading MiniMax H3 X2 VAE")
         pipeline = model_factory(model_filename, text_encoder_filename, dtype=dtype,
-                                 reference_mode=base_model_type in (REF2VA_ARCHITECTURE, REF2VA_PRUNED_ARCHITECTURE, TTS_REF2VA_PRUNED_ARCHITECTURE, VIGGLE_ARCHITECTURE, VIGGLE_REMAKE_ARCHITECTURE, P_H3_IMAGE_ARCHITECTURE),
+                                 reference_mode=base_model_type in (REF2VA_ARCHITECTURE, REF2VA_PRUNED_ARCHITECTURE, TTS_REF2VA_PRUNED_ARCHITECTURE, VIGGLE_ARCHITECTURE, VIGGLE_REMAKE_ARCHITECTURE,
+                                                                    P_H3_IMAGE_ARCHITECTURE, *H3_IMAGE_ARCHITECTURES),
                                  save_quantized=save_quantized, model_type=model_type,
                                  qkv_splitting=model_def["qkv_splitting"],
                                  qkv_layout=model_def["qkv_layout"],
@@ -1516,7 +1598,11 @@ class family_handler:
         pipe = {"transformer": pipeline.transformer}
         if image_model:
             pipe.update({"vae": pipeline.video_decoder, "video_encoder": pipeline.video_encoder, "text_encoder": pipeline.text_encoder.language_model,
-                         "vision_encoder": pipeline.text_encoder.visual, "text_connector": pipeline.text_encoder.text_connector, "latent_upscaler": pipeline.latent_upscaler})
+                         "vision_encoder": pipeline.text_encoder.visual})
+            if distilled_text_encoder:
+                pipe["text_connector"] = pipeline.text_encoder.text_connector
+            if pipeline.latent_upscaler is not None:
+                pipe["latent_upscaler"] = pipeline.latent_upscaler
             return pipeline, {"pipe": pipe, "pinnedMemory": False} if disable_pinning else pipe
         if base_model_type == TTS_REF2VA_PRUNED_ARCHITECTURE and H3_DIALOGUE_GENERATION:
             pipeline.dialogue_whisper = load_dialogue_whisper()
@@ -1555,11 +1641,14 @@ class family_handler:
             ui_defaults["overrides"] = set_override(ui_defaults.get("overrides", ""), "attention_mode", "vsa")
         elif get_override(ui_defaults.get("overrides", ""), "attention_mode") == "vsa":
             ui_defaults["overrides"] = set_override(ui_defaults["overrides"], "attention_mode", "")
-        if base_model_type in (TTS_REF2VA_PRUNED_ARCHITECTURE, P_H3_IMAGE_ARCHITECTURE):
+        if base_model_type in (TTS_REF2VA_PRUNED_ARCHITECTURE, P_H3_IMAGE_ARCHITECTURE, *H3_IMAGE_ARCHITECTURES):
             return
         if base_model_type in CONTROL_ARCHITECTURES:
             # The former VU/UV outpainting choice is now V plus the existing spatial-outpainting settings.
             ui_defaults["video_prompt_type"] = ui_defaults.get("video_prompt_type", "").replace("U", "")
+        audio_prompt_type = ui_defaults.get("audio_prompt_type", "")
+        if base_model_type in (FL2VA_ARCHITECTURE, FL2VA_PRUNED_ARCHITECTURE, *CONTROL_ARCHITECTURES) and any(letter in audio_prompt_type for letter in "AK") and "S" not in audio_prompt_type:
+            ui_defaults["audio_prompt_type"] = audio_prompt_type + "S"  # their kept soundtrack was A or K alone, before AS / KS as in Ref2VA
         if settings_version < 2.75:
             ui_defaults["switch_threshold"] = H3_PHASE_2_NOISE_LEVEL_START_DEFAULT
         if settings_version < 2.74:
@@ -1603,6 +1692,10 @@ class family_handler:
     @staticmethod
     def update_default_settings(base_model_type, model_def, ui_defaults):
         ui_defaults.pop("input_video_strength", None)
+        if base_model_type in H3_IMAGE_ARCHITECTURES:
+            ui_defaults.update({"image_mode": 1, "resolution": "4096x4096", "num_inference_steps": H3_IMAGE_STEPS, "guidance_phases": 1, "guidance_scale": 1.0,
+                                "sample_solver": "euler", "video_prompt_type": "", "audio_prompt_type": "", "prompt_enhancer": "", "batch_size": 1})
+            return
         if base_model_type == P_H3_IMAGE_ARCHITECTURE:
             ui_defaults.update({"image_mode": 1, "resolution": "2912x2912", "num_inference_steps": P_H3_IMAGE_STEPS, "num_inference_steps2": 3, "guidance_phases": 1,
                                 "switch_threshold": P_H3_IMAGE_SWITCH_THRESHOLD, "custom_sigmas": "", "guidance_scale": 1.0, "sample_solver": "euler", "flow_shift": 12.0,

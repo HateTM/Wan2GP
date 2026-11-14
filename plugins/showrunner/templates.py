@@ -29,9 +29,10 @@ PROMPT_RULES_NOTE = ("user_prompt_rules are the user's own rules for the prompts
 ROLES = (
     {"id": "images", "task": "gen_image", "hint": "Stills, illustrated pages and backgrounds"},
     {"id": "image_edits", "task": "edit_image", "hint": "The cast's reference pictures and looks, made from their photos"},
-    # Its own Auto: a model trained on character swaps (6/6 frames swapped with the sheet's build where Qwen 2.1 Turbo, Deepy's default editor, did 2/6: specs).
+    # Its own Auto, not Deepy's image editor: H3-Image keeps poses and expressions and handles several people with someone staying
+    # (12 draws of two remakes: 8 clean against Klein's 9, Viggle Image Swap's 2 and Qwen 2.1 Turbo's swaps that left people unchanged: specs).
     {"id": "frame_painter", "task": "edit_image", "label": "Frame Painter", "hint": "A remake's frames where people are replaced by the cast, painted before the video",
-     "auto_template": "edit_image/Qwen Image 2.1 Viggle Image Swap 6 Steps"},
+     "auto_template": "edit_image/H3-Image Pruned 6 Steps"},
     {"id": "shots_without_cast", "task": "gen_video", "hint": "Shots without the cast: landscapes, objects, crowds, inserts"},
     {"id": "cast_shots_lip_synced", "task": "gen_video_with_speech", "hint": "Shots where someone sings or speaks, lip-synced to the song or to their line"},
     {"id": "cast_shots", "task": "gen_video_with_refs", "hint": "Shots with the cast, keeping each person's face, hair and outfit from their pictures"},
@@ -257,6 +258,22 @@ def whole_take(doc: dict[str, Any], catalog: list[dict[str, Any]], shot: dict[st
     planned = float(shot.get("duration_s") or 0.0)
     length = _seconds(first + max(0, round((planned * fps - first) / step)) * step, fps)
     return length if abs(length - planned) > 0.01 else 0.0
+
+
+def soundtrack_choice(model_def: dict[str, Any]) -> str:
+    """A model's audio choice that keeps an audio_guide as the soundtrack its picture follows: the one with S (H3, LTX-2), else A where the input
+    audio is the output's (Viggle); "" when it has none."""
+    choices = (model_def.get("audio_prompt_type_sources") or {}).get("selection") or []
+    return next((choice for choice in choices if "A" in choice and "S" in choice), "") or ("A" if model_def.get("output_audio_is_input_audio") and "A" in choices else "")
+
+
+def soundtrack_letters(shot: dict[str, Any], entry: dict[str, Any] | None, settings: dict[str, Any]) -> str:
+    """The audio choice a shot's settings take from its model, "" to keep theirs: the one that keeps the driving audio as the soundtrack,
+    always on a shot driven by the song (whatever a template or the director chose, its lips must follow the song the cut plays), and on a
+    reference template given audio with no audio choice."""
+    if entry is None or not entry["soundtrack"] or not settings.get("audio_guide"):
+        return ""
+    return entry["soundtrack"] if shot.get("audio_slice") or not entry["audio"] and not settings.get("audio_prompt_type") else ""
 
 
 def shot_entry(doc: dict[str, Any], shot: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, Any] | None:

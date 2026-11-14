@@ -124,12 +124,13 @@ function render(){
   state.renderedView=nextView;
   const nav=state.preferences.installations.length?[["overview","home","Overview"],["install","install","Install / Add"],["maintenance","maintain","Update WanGP"],["diagnostics","diagnostic","Diagnostics"],["activity","activity","Activity"],["preferences","settings","Preferences"]]:[["install","install","Install / Add"]];
   document.querySelector("#app").innerHTML=html(
-    '<div class="shell" {shellState}><aside class="sidebar"><div class="brand"><img class="brand-icon" src="manager.png" alt=""><div><div class="brand-name">WanGP</div><div class="brand-sub">Manager</div></div></div><div class="nav-label">YOUR INSTALLATIONS</div><nav class="nav">{nav}</nav><div class="sidebar-bottom"><div><span class="dot {warn}"></span>{runtime}</div><div class="badge-label">VERSION {version} · EXPERIMENTAL</div>{managerNew}</div></aside><main class="main"><header class="topbar"><div class="breadcrumb">WanGP Manager / <strong>{page}</strong></div>{picker}</header><div class="content">{error}{message}{progress}{content}</div></main></div>{expandedConsole}<dialog id="close-dialog"><h2>Work is still running</h2><p>Keep Manager open, or stop its servers and cancel active operations before exiting. Interrupted installation work can be recovered when you return.</p><div class="actions">{keep}{exit}</div></dialog>',{
+    '<div class="shell" {shellState}><aside class="sidebar"><div class="brand"><img class="brand-icon" src="manager.png" alt=""><div><div class="brand-name">WanGP</div><div class="brand-sub">Manager</div></div></div><div class="nav-label">YOUR INSTALLATIONS</div><nav class="nav">{nav}</nav><div class="sidebar-bottom"><div><span class="dot {warn}"></span>{runtime}</div><div class="badge-label">VERSION {version} · EXPERIMENTAL</div>{managerNew}{star}</div></aside><main class="main"><header class="topbar"><div class="breadcrumb">WanGP Manager / <strong>{page}</strong></div>{picker}</header><div class="content">{error}{message}{progress}{content}</div></main></div>{expandedConsole}<dialog id="close-dialog"><h2>Work is still running</h2><p>Keep Manager open, or stop its servers and cancel active operations before exiting. Interrupted installation work can be recovered when you return.</p><div class="actions">{keep}{exit}</div></dialog>',{
       shellState:state.consoleExpanded?'inert aria-hidden="true"':"",
       expandedConsole:state.consoleExpanded?consoleMarkup(launchLog(),"server-log","Start WanGP to see its console output here."):"",
       nav:nav.map(([page,icon,label])=>button("navigate",svg(icon)+label,state.page===page?"active":"",false,'data-page="'+page+'"')).join(""),
       warn:state.runtime_error?"warn":"",runtime:state.runtime_error?"Runtime needs attention":"Local runtime ready",version:esc(state.version||"0.1.0"),
       managerNew:state.managerUpdate&&newerVersion(state.managerUpdate.version,state.version||"0")?button("navigate","Manager "+esc(state.managerUpdate.version)+" is available","text-link small manager-new",false,'data-page="preferences"'):"",
+      star:button("github-star","★ Star WanGP on GitHub","text-link small manager-new",false,'title="Opens the WanGP project page in your browser"'),
       page:nav.find(x=>x[0]===state.page)?.[2],
       picker:state.preferences.installations.length?'<select id="installation-picker" aria-label="Active installation">'+state.preferences.installations.map(x=>option(x.root,(x.test_workspace?"Test installation":x.name)+(x.test_workspace?" · Test":""),selected()?.root)).join("")+'</select>':'<span class="pill">WanGP installations</span>',
       error:state.runtime_error?notice(esc(state.runtime_error),"error"):"",
@@ -294,7 +295,7 @@ function activity(){
     (active?.result?'<details><summary>Result details</summary><pre>'+pretty(active.result)+'</pre></details>':"")+'</section><p class="footer-note">The live view keeps recent events. Durable installation journals remain with each managed installation.</p>';
 }
 function savedLaunchOptions(){return {listen:false,verbose:false,authentication:false,password_mode:"generated",debug_deepy:false,telemetry:false,...state.preferences.launch_options,debug_directory:state.preferences.launch_options?.debug_directory||state.data_directory+"/logs/deepy",telemetry_file:state.preferences.launch_options?.telemetry_file||state.data_directory+"/logs/telemetry.log"};}
-function preferencesDirty(){return !!state.authenticationDraft.password||String(state.preferencesDraft?.port??state.preferences.port)!==String(state.preferences.port)||!!state.launchDraft&&Object.entries(savedLaunchOptions()).some(([key,value])=>state.launchDraft[key]!==value);}
+function preferencesDirty(){return !!state.authenticationDraft.password||String(state.preferencesDraft?.port??state.preferences.port)!==String(state.preferences.port)||(state.preferencesDraft?.app_without_gpu??!!state.preferences.app_without_gpu)!==!!state.preferences.app_without_gpu||!!state.launchDraft&&Object.entries(savedLaunchOptions()).some(([key,value])=>state.launchDraft[key]!==value);}
 function updatePreferenceStatus(){
   const dirty=preferencesDirty(),save=document.querySelector('[data-action="save-launch-options"]'),discard=document.querySelector('[data-action="discard-preferences"]'),status=document.getElementById('preferences-status');
   if(save)save.disabled=!dirty||state.savingPreferences;
@@ -303,15 +304,18 @@ function updatePreferenceStatus(){
 }
 function preferences(){
   state.launchDraft??=savedLaunchOptions();
-  state.preferencesDraft??={port:state.preferences.port};
+  state.preferencesDraft??={port:state.preferences.port,app_without_gpu:!!state.preferences.app_without_gpu};
   const draft=state.launchDraft;
   const launchOption=(key,label,help)=>'<div class="field"><label class="check" for="launch-'+key+'"><input id="launch-'+key+'" type="checkbox" data-group="launchDraft" data-key="'+key+'" '+(draft[key]?'checked':'')+'>'+label+'</label><p class="hint">'+help+'</p></div>';
   return heading("PREFERENCES","Make yourself at home.","Changes apply the next time you start WanGP.")+
     '<fieldset class="preferences-fields" '+disabled(state.savingPreferences)+'><section class="card"><h2>Launching</h2><p class="hint">Open in App and Open in Browser connect to the same running server.</p><div class="spacer"></div><div class="field"><label for="port">Server port</label><input id="port" type="number" min="1024" max="65535" data-group="preferencesDraft" data-key="port" value="'+esc(state.preferencesDraft.port)+'"></div>'+
     launchOption('listen','Accessible on the local network','Connect from another device on your network. Adds --listen.')+'</section>'+
+    '<section class="card"><h2>App window</h2><div class="field"><label class="check" for="app-without-gpu"><input id="app-without-gpu" type="checkbox" data-group="preferencesDraft" data-key="app_without_gpu" '+(state.preferencesDraft.app_without_gpu?'checked':'')+'>Run the App window without the graphics card</label>'+
+    '<p class="hint">Leaves the graphics memory the App window would use to WanGP. Pages and video previews are then drawn by the processor, so scrolling and playback can be less smooth. Open in Browser is not affected: your browser has its own setting.</p>'+
+    (!!state.preferences.app_without_gpu!==!!state.app_without_gpu_active?'<p class="hint" role="status"><strong>Restart Manager to apply this change.</strong></p>':'<p class="hint">Applies when Manager starts.</p>')+'</div></section>'+
     '<section class="card"><h2>Authentication</h2>'+launchOption('authentication','Require a password','Optional password protection for the WanGP web interface.')+
     (draft.authentication?'<div class="field"><label for="password-mode">Password</label><select id="password-mode" data-group="launchDraft" data-key="password_mode">'+option('generated','Generate a password at every launch',draft.password_mode)+option('custom','Use my own password',draft.password_mode)+'</select></div>'+
-    (draft.password_mode==='custom'?'<div class="field"><label for="custom-password">Custom password</label><input id="custom-password" type="password" autocomplete="new-password" data-group="authenticationDraft" data-key="password" value="'+esc(state.authenticationDraft.password)+'" placeholder="'+(state.preferences.password_saved?'Password saved — leave blank to keep it':'Enter your password')+'"><p class="hint">Saved with Windows protection for your user account.</p></div>':'<p class="hint">WanGP generates a fresh password and displays it in the launch console.</p>'):'')+'</section>'+
+    (draft.password_mode==='custom'?'<div class="field"><label for="custom-password">Custom password</label><input id="custom-password" type="password" autocomplete="new-password" data-group="authenticationDraft" data-key="password" value="'+esc(state.authenticationDraft.password)+'" placeholder="'+(state.preferences.password_saved?'Password saved — leave blank to keep it':'Enter your password')+'"><p class="hint">'+(state.platform==='linux'?'Saved in your desktop keyring.':'Saved with Windows protection for your user account.')+'</p></div>':'<p class="hint">WanGP generates a fresh password and displays it in the launch console.</p>'):'')+'</section>'+
     '<section class="card"><h2>Debug</h2>'+launchOption('verbose','Detailed console','Adds --verbose 2.')+
     launchOption('debug_deepy','Deepy debug logs','Adds --debug-deepy and enables verbose level 2.')+
     (draft.debug_deepy?field('launchDraft','debug_directory','Deepy log folder','Choose where Deepy saves its debug logs','folder'):'')+
@@ -455,6 +459,8 @@ document.addEventListener("click",async event=>{
     else if(action==="detect-installation")await detectInstallation();
     else if(action==="manager-update"){state.managerUpdate=await run("manager_update");render();}
     else if(action==="manager-download")await invoke("open_manager_download");
+    // WanGP asks for the star itself; the next launch tells it the project page was opened here.
+    else if(action==="github-star"){state.preferences=await invoke("github_star");render();}
     else if(action==="new-view"){state.registerView=false;render();}
     else if(action==="browse"){
       const value=await invoke("pick_path",{kind:el.dataset.kind});
@@ -518,8 +524,8 @@ document.addEventListener("click",async event=>{
       if(!Number.isInteger(port)||port<1024||port>65535)throw new Error("Choose a port between 1024 and 65535.");
       state.savingPreferences=true;render();
       try{
-        state.preferences=await invoke("set_launch_options",{options:{...state.launchDraft},password:state.authenticationDraft.password||null,port});
-        state.authenticationDraft.password="";state.launchDraft=savedLaunchOptions();state.preferencesDraft={port:state.preferences.port};
+        state.preferences=await invoke("set_launch_options",{options:{...state.launchDraft},password:state.authenticationDraft.password||null,port,appWithoutGpu:!!state.preferencesDraft.app_without_gpu});
+        state.authenticationDraft.password="";state.launchDraft=savedLaunchOptions();state.preferencesDraft={port:state.preferences.port,app_without_gpu:!!state.preferences.app_without_gpu};
         notify("Preferences saved. They will apply the next time you start WanGP.");
       }finally{state.savingPreferences=false;render();}
     }

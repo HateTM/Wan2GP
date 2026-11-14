@@ -55,6 +55,15 @@ The production opens on its **Brief**, which saves itself as you type:
 - **The song** (music videos) or a **soundtrack**: drop an audio file, or a video to use its sound. No song yet? Leave it empty: the
   showrunner composes one from your idea (and your lyrics, when you write them). Showrunner listens to the song and shows its
   waveform, tempo and parts (intro, verses, choruses, bridge). The showrunner cuts on these parts and bars.
+  **Change the voice** on the song card has the song sung in another voice, your own song or one the showrunner composed (song
+  models cannot sing in a voice you give them): a cast member's (the voice sample on their card, or one made from their voice
+  description) or a voice sample from your computer. **Two singers (a duet)** gives each of the song's two voices its own, in the
+  order they are first heard: pick two cast members, or voice samples you dropped in the media bin. The music, the words and their
+  timing stay, so the shots already made keep their lip sync; the former version waits in the bin. Asking the showrunner in the chat
+  does the same. With no song, **Sung by** under the song field chooses whose voice sings the song the showrunner composes (a cast
+  member with a voice, or two for a duet): it composes the song, then has it sung in that voice using SeedVC. Both actions require
+  **SeedVC Voice Replacement** set to **v1.0 Singing** in **Configuration > Extensions** (the default). Speech modes cannot be used
+  for changing a song's singer.
 - **References**: pictures or videos of looks, places, moods or movements.
 - **Cast**: drop a photo of each person or recurring object so that they look the same in every shot, and describe how each speaker
   sounds (or drop a recording of their voice) so that they sound the same in every line (see **The Cast**).
@@ -105,7 +114,7 @@ A **Viggle Remake** recasts the people of an existing video, or changes its obje
 
 **Shots rendered together**, beside your video in the Brief, joins short shots with their neighbours in one render (at least 8 seconds by default): rendered alone, a short shot's lips barely follow the speech or the singing. Each shot still gets its own take. When you render one shot again, its neighbours render with it and each gets a new take beside the one it uses, so nothing you chose changes; the shot's takes say what they were rendered with. Select shots that follow each other to render them together, up to the model's longest render (about 14 seconds): the panel says which shots render together, and **Reshoot N shots** on the toolbar, like **Reshoot them** in the panel, gives each a new take, at the size **Draft** / **Final** says. While shots render, the Showrunner button at the top says which ones and how far they are. Set it to 0, or turn off **Group rendering** on the Board's toolbar, to render every shot alone.
 
-Under **Models**, the **Frame Painter** paints the frames where people are replaced. Its Auto is Viggle Image Swap, a model made for this: it gives each new person the body of their character sheet, not the original's, and dresses them in the sheet's outfit, so describe the costume you want on their cast card. A moving pose can come out a little stiffer. The **Image Editor** paints the frames of other changes and makes the character sheets. Choose a **Draft resolution** of 480p in the Brief for a fast first version: a two-minute video with many cuts takes hours at 720p on one graphics card.
+Under **Models**, the **Frame Painter** paints the frames where people are replaced. Its Auto is H3-Image: it keeps each person's place, pose and expression, and handles several people in one frame, including someone who stays as they are. When a person becomes a character of another kind, such as a teddy bear, it sometimes paints only the head on the original body; the showrunner checks each painted frame and paints it again. Viggle Image Swap, also in the list, gives each new person the body of their character sheet rather than the original's, but loses moving poses and expressions, and dresses everyone in their sheet's outfit. The **Image Editor** paints the frames of other changes and makes the character sheets. Choose a **Draft resolution** of 480p in the Brief for a fast first version: a two-minute video with many cuts takes hours at 720p on one graphics card.
 
 A shot with nothing to change is not rendered at any size: the edit reads it directly from your video.
 
@@ -291,7 +300,7 @@ a category can do it, **(keeps faces)** marks those that take the cast's picture
 spoken line.
 
 - **Auto** uses the template selected in Deepy's settings for the category; its name is shown next to Auto. The Frame Painter's Auto is
-  Viggle Image Swap, which replaces people far more reliably than a general image editor.
+  H3-Image, which replaced people more reliably than the other image editors in our tests, keeping their poses and expressions.
 - **When a template cannot do what a shot needs**, the showrunner takes the one of another category. For example, when the Video With
   Speech template cannot keep the cast's faces, the singers and speakers of the cast are shot with the Video Generator with Ref.
   template, which follows the song or the line as its soundtrack (when its model can, as MiniMax H3 Ref2VA can).
@@ -405,6 +414,10 @@ The window lets you add or remove shots (Shift+click for a run of them) and say 
 - **Just say what is wrong:** "her coat changes colour". The showrunner looks for the cause and changes as little as it can: a trim, a subtitle, another take, a new take.
 
 With **Keep everything else as it is** on, the showrunner cannot touch anything but those shots. It then makes a new version and tells you what changed. Locked shots are never changed.
+
+**Make a new version when done** is on by default. Turn it off when you fix shot after shot before watching: the showrunner stops once the new takes are judged and makes no version, and you press **Assemble** when you are ready to watch the edit. The window keeps your choice for the next fixes until the page is reloaded. With **Review the takes before the edit** in the brief, a fix always ends on your review instead, so the window does not offer this choice.
+
+To try another take of a shot with the same prompt and a new seed, **Reshoot** on the Board or in the shot's panel renders it at once, without the showrunner and without a new version.
 
 **On a film,** the rest moves along when a shot is inserted or changes length: each shot's sound, the voice-over lines, the cards and the subtitles (also those of an SRT file you added) stay on their pictures. A score keeps playing from where it starts, so its hits may no longer land on the same pictures; you are warned if the film outlasts it.
 

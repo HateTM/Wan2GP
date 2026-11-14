@@ -49,6 +49,11 @@ class DirectorRequest(BaseModel):
     task: str
     message: str = ""
     shots: list[str] = Field(default_factory=list)
+    new_version: bool = True  # False: the task ends without assembling, the user makes the next version
+
+
+class SongVoiceRequest(BaseModel):
+    singers: list[str]  # who sings, first heard first (two for a duet): cast ids or voice samples of the production (their paths)
 
 
 class TemplatePick(BaseModel):
@@ -350,7 +355,7 @@ def create_app(showrunner, *, title: str = "Showrunner") -> FastAPI:
     @app.post("/api/productions/{production_id}/director")
     def direct(production_id: str, request: DirectorRequest):
         production(production_id)
-        return showrunner.director.start(production_id, request.task, request.message, request.shots)
+        return showrunner.director.start(production_id, request.task, request.message, request.shots, request.new_version)
 
     @app.post("/api/productions/{production_id}/director/steer")
     def steer(production_id: str, request: Steer):
@@ -420,6 +425,15 @@ def create_app(showrunner, *, title: str = "Showrunner") -> FastAPI:
     def rerun(production_id: str, shot_id: str):
         production(production_id)
         return showrunner.rerun(production_id, shot_id)
+
+    @app.get("/api/singer-voice")
+    def singer_voice():
+        return {"unavailable": showrunner.host.singer_voice_unavailable()}
+
+    @app.post("/api/productions/{production_id}/song-voice")
+    def song_voice(production_id: str, request: SongVoiceRequest):
+        production(production_id)
+        return showrunner.change_singer_voice_directly(production_id, request.singers)
 
     @app.post("/api/productions/{production_id}/render")
     def render_now(production_id: str, request: RenderRequest):
