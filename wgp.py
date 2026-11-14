@@ -1759,6 +1759,10 @@ def validate_settings(state, model_type, single_prompt, inputs, silent=False):
         error = model_handler.validate_generative_settings(model_type, model_def, inputs)
         if error is not None and len(error) > 0:
             return err(error)
+    if not silent and hasattr(model_handler, "generative_settings_warning"):
+        settings_warning = model_handler.generative_settings_warning(model_type, model_def, inputs)
+        if settings_warning:
+            gr.Warning(settings_warning)
     if model_def.get("custom_sigmas", False):
         # A mode may force one phase, or restore its usual distilled step count.
         # Check the effective phase count and retain explicit schedule precedence.

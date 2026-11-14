@@ -204,6 +204,26 @@ class family_handler:
             ui_defaults["custom_settings"] = {**custom, "qwen21_kv_cache": "INT8"}
 
     @staticmethod
+    def generative_settings_warning(base_model_type, model_def, inputs):
+        solver = str(inputs.get("sample_solver") or "")
+        if solver not in ("pruna", "pruna_v02", "viggle_v02"):
+            return ""
+        notes = []
+        resolution = str(inputs.get("resolution") or "")
+        try:
+            width, height = (int(value) for value in resolution.lower().split("x"))
+        except (ValueError, TypeError):
+            width = height = 0
+        if width and height and (width * height > 1_200_000 or max(width, height) > 1280):
+            notes.append(f"resolution {resolution} is beyond the ~1K the adapter was trained on")
+        references = inputs.get("image_refs") or []
+        if solver in ("pruna", "pruna_v02") and len(references) > 3:
+            notes.append(f"{len(references)} reference images exceed the three the adapter was validated with")
+        if not notes:
+            return ""
+        return "Accelerator quality is unverified here: " + "; ".join(notes) + ". Expect drift; fall back to the default solver if the result degrades."
+
+    @staticmethod
     def load_model(model_filename, model_type, base_model_type, model_def, text_encoder_filename=None, save_quantized=False, quantizeTransformer=False, **kwargs):
         from mmgp import offload, quant_router, runtime
         from .text_encoder import Qwen3VLForConditionalGeneration
