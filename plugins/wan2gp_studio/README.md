@@ -8,7 +8,7 @@ WanGP Studio is a lightweight, full-screen plugin frontend for the existing WanG
 - Uses self.deepy.web_session() to submit work to the already-running WanGP WebUI queue.
 - Keeps one lazy session per plugin app instance.
 - Does not retain preview PIL images or MP4 preview bytes in backend memory.
-- Uses static HTML, CSS and JavaScript in this bootstrap release; no second frontend server, bundler process, charting stack or animation runtime is required.
+- Uses static HTML, CSS and JavaScript; no second frontend server, bundler process, charting stack or animation runtime is required.
 - Model metadata, defaults, schemas, presets and LoRAs are read from the installed WanGP API rather than a hard-coded model catalogue.
 
 ## Installation
@@ -20,9 +20,9 @@ WanGP Studio is a lightweight, full-screen plugin frontend for the existing WanG
 
 The web app is registered through WAN2GPPlugin.register_web_app() and is served by the existing WanGP server behind its authentication. The plugin metadata declares WanGP 18.84 as its minimum supported version, matching the API surface used by this implementation.
 
-## Scope (v1.0)
+## Scope (current: v1.6.1)
 
-v1.0 covers the Dashboard, Workflow (node canvas with save/run/cancel and import/export), Media Center (gallery, upload, Worlds), Models (availability, presets, LoRA inventory), Resources (read-only telemetry) and Settings (read-only diagnostics). The bullets below describe the original v0.1 bootstrap that the later milestones extended.
+WanGP Studio 1.6.1 covers the Dashboard, Workflow (node canvas with graph editing, persistence, multi-node execution and import/export), Media Center (gallery, lightbox, upload, Worlds), Models (availability, presets, LoRA inventory), Resources (live RAM/VRAM telemetry), Plugin Health (installed-vs-upstream board) and Jobs/Queue (Studio-submitted jobs, repeat, run history). The bullets below describe the original v0.1 bootstrap that the later milestones extended.
 
 - Dynamic model catalogue with basic search and output-type filters.
 - Per-model inspection: definition, metadata, capability schema, local model-file availability, native defaults, presets/profiles and installed LoRA inventory.
@@ -37,7 +37,7 @@ v1.0 covers the Dashboard, Workflow (node canvas with save/run/cancel and import
 - Upload Center: drop/browse uploads run as a bounded-parallelism queue (2 concurrent), with per-file XHR progress, per-file failure reasons, retry, cancel and a gallery refresh once the queue drains.
 - Real SendTo hand-off: Studio reads the target plugin's `sendto.json` manifest (the same contract the SendTo plugin uses), parks a one-shot hand-off id, and opens the WanGP UI with `?studio_sendto=<id>`. A hidden Studio control in the main Gradio UI receives the live session `state`, appends `{"path", "slot"}` to the manifest's `inbox_key`, and the injected JS selects the target tab so the plugin drains the frame into the chosen slot (Image Suite: Img2Img / MultiCanvas / Modify). No code is copied from the target plugin; without the bridge or the plugin the UI degrades to a copied path. Targets are filtered by the manifest's `accepts` kinds and the plugin's enabled state on both the UI and the API side.
 
-The first frontend was deliberately a lightweight bootstrap; the later milestones replaced that scope. As of 1.3 the visual node canvas supports graph editing, workflow persistence and multi-node execution through `/api/workflow/*`, the Media Center is a real gallery browser (lightbox, upload, Worlds) with an incremental index, and Resources shows live RAM/VRAM telemetry. Image editing happens through SendTo into the enabled editor plugin (Image Suite) rather than a built-in editor. The Plugins view is a health board: every installed plugin is compared with its upstream repository (version, behind/ahead, local commits, dead remotes) without ever auto-updating a fork. The queue panel shows Studio-submitted jobs, not every task submitted from the native WanGP UI.
+The first frontend was deliberately a lightweight bootstrap; the later milestones replaced that scope. As of 1.3 the visual node canvas supports graph editing, workflow persistence and multi-node execution through `/api/workflow/*`, the Media Center is a real gallery browser (lightbox, upload, Worlds) with an incremental index, and Resources shows live RAM/VRAM telemetry. Image editing happens through SendTo into the enabled editor plugin (Image Suite) rather than a built-in editor. The Plugins view is a health board: every installed plugin is compared with its upstream repository (version, behind/ahead, local commits, dead remotes) without ever auto-updating a fork. The queue panel shows Studio-submitted jobs, not every task submitted from the native WanGP UI. The current-state architecture reference is docs/superpowers/specs/STUDIO_INTEGRATION_ARCHITECTURE.md (Part 2, v1.6.1).
 
 ## API routes
 
@@ -83,6 +83,7 @@ Run the suites with the repo venv:
 - `env_uv/Scripts/python.exe -m pytest plugins/plugin_manager/tests -q` (version-compare and update fork-guard regressions for `shared/utils/plugins.py`)
 - `env_uv/Scripts/python.exe -m pytest plugins/wan2gp-wanflow-ui/tests -q` (the vendored WanFlow UI fork against current WanGP). CI runs the CPU-safe subset: the graph-runner modules import mmgp, which needs a CUDA-enabled torch, so `tests/cuda_gate.py` skips them only when CUDA is genuinely unavailable - with CUDA present a broken import fails the run instead of hiding behind a skip. A GPU workstation runs the full suite and remains the acceptance gate.
 - `python -m playwright install chromium && python -m pytest plugins/wan2gp_studio/e2e -q` (browser tests in `e2e/`: a real uvicorn server + headless Chromium assert the gallery page-store bounds, scroll-back refetch, upload queue and filters). The separate `Studio E2E` workflow runs them on every Studio change; `WANFLOW_REQUIRE_CUDA=1 python -m pytest plugins/wan2gp-wanflow-ui/tests -q` is the strict GPU acceptance gate.
+- `python scripts/gpu_acceptance.py` — end-to-end GPU acceptance against the live API: run 1 cancels mid-denoise, runs 2–3 switch models back and forth, VRAM must return to the baseline; non-zero exit code on any failed checkpoint.
 
 - The core CI job installs pinned test dependencies, including `diffusers==0.36.0` — `shared.utils` imports it at package init, so a missing diffusers fails at collection.
 - Tests that need the optional WanFlow UI plugin skip when it is absent. The `studio-integration` job clones the plugin from the repository variables `WANFLOW_UI_REPO` (git URL) and `WANFLOW_UI_REF` (default `main`), sets `WANFLOW_UI_REQUIRED=1`, and then a missing WanFlow import fails the run instead of silently skipping. Set both variables under Settings → Secrets and variables → Actions → Variables to enable it.
