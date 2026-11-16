@@ -1,5 +1,0 @@
-out-*/
-*.nsys-rep
-*.sqlite
-__pycache__/
-*.png
